@@ -1,0 +1,69 @@
+{
+  "name": "dsh-living",
+  "version": "0.1.0",
+  "description": "A living agent runtime for DeepSeek Harness: clock, memory, persona, and WorldGem modules",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisVon/dsh-living.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/AlexisVon/dsh-living#readme",
+  "bugs": {
+    "url": "https://github.com/AlexisVon/dsh-living/issues"
+  },
+  "author": "AlexisVon",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./agent": "./agent.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0",
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "check": "node --check index.js && node --check agent.js && node --check client.js && for f in lib/*.mjs; do node --check \"$f\" || exit 1; done"
+  },
+  "files": [
+    "index.js",
+    "agent.js",
+    "client.js",
+    "lib",
+    "gems",
+    "cordis.patch.yml",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "autonomy",
+    "agent-life"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.19.0",
+    "dsh-living-protocol": "workspace:*"
+  }
+}

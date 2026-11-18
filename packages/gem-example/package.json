@@ -1,0 +1,37 @@
+{
+  "name": "dsh-gem-example",
+  "version": "0.1.0",
+  "description": "Reference WorldGem for dsh-living: the shape every gem follows",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisVon/dsh-living.git",
+    "directory": "packages/gem-example"
+  },
+  "homepage": "https://github.com/AlexisVon/dsh-living/tree/main/packages/gem-example",
+  "bugs": {
+    "url": "https://github.com/AlexisVon/dsh-living/issues"
+  },
+  "author": "AlexisVon",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "worldgem.json",
+    "skill",
+    "mcp",
+    "channel",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "worldgem",
+    "example"
+  ],
+  "dependencies": {
+    "dsh-living-protocol": "workspace:*"
+  }
+}

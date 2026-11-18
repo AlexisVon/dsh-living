@@ -1,0 +1,23 @@
+# Bundle patch: one host row. `home` resolves through the loader so every
+# profile on this machine sees the same life.db unless a profile overrides it.
+
+- insert:
+    - id: living
+      name: dsh-living
+      config:
+        home: !!js dshHomePath('living')
+        workspace: ''
+        gemStoreDir: ''
+        timeScale: 1
+        tickMs: 60000
+        l0Tokens: 3000
+        dailyTokens: 2000000
+        roundTokens: 150000
+        selfWakeLimit: 12
+        personaMaxChars: 6000
+        roundTimeoutMs: 600000
+        presetId: living
+        gemDirs: []
+        gemTokensJson: '{}'
+        whitelistJson: '[]'
+        sessionRoot: !!js dshHomePath('sessions')

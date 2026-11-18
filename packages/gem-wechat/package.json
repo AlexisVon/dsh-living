@@ -1,0 +1,45 @@
+{
+  "name": "dsh-gem-wechat",
+  "version": "0.1.0",
+  "description": "WeChat WorldGem for dsh-living: an independent iLink bot with text ingest and outbox delivery",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisVon/dsh-living.git",
+    "directory": "packages/gem-wechat"
+  },
+  "homepage": "https://github.com/AlexisVon/dsh-living/tree/main/packages/gem-wechat",
+  "bugs": {
+    "url": "https://github.com/AlexisVon/dsh-living/issues"
+  },
+  "author": "AlexisVon",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "worldgem.json",
+    "skill",
+    "channel",
+    "lib",
+    "LICENSES",
+    "README.md",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "test": "node --test test/",
+    "login": "node channel/login.mjs",
+    "run": "node channel/run.mjs",
+    "check": "for f in lib/*.mjs channel/*.mjs; do node --check \"$f\" || exit 1; done"
+  },
+  "dependencies": {
+    "dsh-living-protocol": "workspace:*"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "worldgem",
+    "wechat",
+    "ilink"
+  ]
+}

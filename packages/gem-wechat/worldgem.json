@@ -1,0 +1,146 @@
+{
+  "id": "wechat",
+  "name": "微信",
+  "version": "0.1.0",
+  "description": "微信私聊：独立 iLink bot，文本、图片、文件、语音入站；可发送图片与文件",
+  "event": {
+    "protocol": ["ingest", "outbox", "ack"],
+    "visibility": "private"
+  },
+  "channel": {
+    "command": "node",
+    "args": ["channel/run.mjs"]
+  },
+  "notify": {
+    "push": { "mode": "ring", "budget": { "limit": false, "count": false } }
+  },
+  "skill": "skill/SKILL.md",
+  "config": {
+    "fields": [
+      {
+        "key": "outboxPollSeconds",
+        "label": "外发轮询间隔",
+        "type": "number",
+        "default": 5,
+        "min": 2,
+        "max": 300,
+        "step": 1,
+        "unit": "秒",
+        "group": "轮询",
+        "help": "通道多久拉一次待发消息"
+      },
+      {
+        "key": "textChunkLimit",
+        "label": "单条文本上限",
+        "type": "number",
+        "default": 4000,
+        "min": 200,
+        "max": 4000,
+        "step": 100,
+        "unit": "字符",
+        "group": "发送",
+        "help": "超过后按段落拆成多条气泡"
+      },
+      {
+        "key": "baseUrl",
+        "label": "网关地址",
+        "type": "text",
+        "placeholder": "留空使用官方网关",
+        "group": "身份",
+        "help": "只有自建 iLink 网关时才需要填"
+      },
+      {
+        "key": "botType",
+        "label": "Bot 类型",
+        "type": "text",
+        "default": "3",
+        "placeholder": "3",
+        "group": "身份",
+        "help": "iLink 的 bot_type，一般不用改"
+      },
+      {
+        "key": "allowedUsers",
+        "label": "允许的用户",
+        "type": "list",
+        "itemType": "string",
+        "default": [],
+        "group": "身份",
+        "help": "只接受这些用户的消息；留空表示不限"
+      },
+      {
+        "key": "cdnBaseUrl",
+        "label": "媒体 CDN 地址",
+        "type": "text",
+        "default": "https://novac2c.cdn.weixin.qq.com/c2c",
+        "group": "媒体",
+        "help": "iLink 媒体上传/下载的 CDN；一般不用改"
+      },
+      {
+        "key": "maxMediaBytes",
+        "label": "单文件上限",
+        "type": "number",
+        "default": 20971520,
+        "min": 1048576,
+        "max": 104857600,
+        "step": 1048576,
+        "unit": "字节",
+        "group": "媒体",
+        "help": "入站下载与出站发送的单个文件上限，默认 20 MiB"
+      },
+      {
+        "key": "sendPerMinute",
+        "label": "外发速率",
+        "type": "number",
+        "default": 5,
+        "min": 1,
+        "max": 60,
+        "step": 1,
+        "unit": "条/分钟",
+        "group": "限制",
+        "help": "所有出站的滑动窗口上限；超过就等"
+      },
+      {
+        "key": "proactiveDaily",
+        "label": "主动发送日额度",
+        "type": "number",
+        "default": 20,
+        "min": 0,
+        "max": 500,
+        "step": 1,
+        "unit": "条/天",
+        "group": "限制",
+        "help": "只计主动发起的消息；回复收到的消息不占额度。0 = 不限"
+      }
+    ]
+  },
+  "capabilities": {
+    "text": true,
+    "image": true,
+    "file": true,
+    "voice": true,
+    "group": false
+  },
+  "limits": {
+    "maxChars": 4000,
+    "perMinute": 120,
+    "sendPerMinute": 5,
+    "proactiveDaily": 20
+  },
+  "etiquette": [
+    "只在对方发来消息后的 24 小时窗口内主动发消息；窗口外等对方先说话",
+    "连续发给同一个人的消息不超过 10 条（文字气泡与媒体各算一条）；超过就停下等对方回复",
+    "可以发图片和文件：给 living_send 传 media，路径必须是本机绝对路径；不要发语音气泡",
+    "主动发起消息有日额度；回复对方刚发来的消息不占额度",
+    "语音消息优先看微信转写；没有转写就直说听不清，不要猜内容",
+    "不重复发同一条内容；失败就说明，不静默重试"
+  ],
+  "failure_hints": {
+    "gem_cookie_expired": "微信登录态失效，需要重新扫码：在宝石目录运行 node channel/login.mjs",
+    "gem_unavailable": "微信宝石不可用，本轮不要声称发过微信",
+    "config_invalid": "消息太长、气泡超过 10 条，或媒体路径/大小不合法；缩短内容或换个绝对路径再发",
+    "provider_rate": "微信连发窗口已满，等对方先发一条再继续",
+    "provider_quota": "今日主动发送额度已用尽；等明天，或停下不要连续重试",
+    "window_closed": "24 小时互动窗口已过，需要对方先在微信里发一条",
+    "unknown": "微信接口返回未知错误，先停下来说明情况"
+  }
+}

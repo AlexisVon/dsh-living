@@ -1,0 +1,8 @@
+node_modules/
+.dshdev/
+*.db
+*.db-wal
+*.db-shm
+reports/
+*.log
+.DS_Store

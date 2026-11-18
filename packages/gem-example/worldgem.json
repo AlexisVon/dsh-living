@@ -1,0 +1,39 @@
+{
+  "id": "example",
+  "name": "示例宝石",
+  "version": "0.1.0",
+  "description": "把三件套摆齐的空壳：能力 + 事件 + skill",
+  "mcp": {
+    "command": "node",
+    "args": [
+      "mcp/server.js"
+    ],
+    "tools": []
+  },
+  "event": {
+    "protocol": [
+      "ingest",
+      "outbox",
+      "ack"
+    ],
+    "visibility": "private"
+  },
+  "skill": "skill/SKILL.md",
+  "capabilities": {
+    "text": true,
+    "image": false,
+    "voice": false,
+    "group": false
+  },
+  "limits": {
+    "maxChars": 4000,
+    "perMinute": 10
+  },
+  "etiquette": [
+    "示例宝石不对公网发言"
+  ],
+  "failure_hints": {
+    "gem_unavailable": "示例宝石不可用，本轮不要声称用过它",
+    "window_closed": "窗口已关，改走邮件"
+  }
+}

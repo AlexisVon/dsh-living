@@ -1,0 +1,26 @@
+{
+  "name": "dsh-living-monorepo",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisVon/dsh-living.git"
+  },
+  "homepage": "https://github.com/AlexisVon/dsh-living#readme",
+  "bugs": {
+    "url": "https://github.com/AlexisVon/dsh-living/issues"
+  },
+  "author": "AlexisVon",
+  "type": "module",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "spike:s3": "node spikes/s3-sqlite.mjs",
+    "backtest:l0": "node scripts/backtest-l0.mjs",
+    "selfcheck": "node scripts/selfcheck.mjs",
+    "check": "pnpm -r --if-present check"
+  }
+}

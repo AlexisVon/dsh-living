@@ -1,0 +1,45 @@
+{
+  "name": "dsh-gem-bili",
+  "version": "0.1.0",
+  "description": "Bilibili WorldGem for dsh-living: search, subtitles, comments, private messages and public replies",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisVon/dsh-living.git",
+    "directory": "packages/gem-bili"
+  },
+  "homepage": "https://github.com/AlexisVon/dsh-living/tree/main/packages/gem-bili",
+  "bugs": {
+    "url": "https://github.com/AlexisVon/dsh-living/issues"
+  },
+  "author": "AlexisVon",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "worldgem.json",
+    "skill",
+    "mcp",
+    "channel",
+    "lib",
+    "LICENSES",
+    "README.md",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "test": "node --test test/",
+    "login": "node channel/login.mjs",
+    "run": "node channel/run.mjs",
+    "check": "for f in lib/*.mjs channel/*.mjs mcp/*.js; do node --check \"$f\" || exit 1; done"
+  },
+  "dependencies": {
+    "dsh-living-protocol": "workspace:*"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "worldgem",
+    "bilibili"
+  ]
+}
