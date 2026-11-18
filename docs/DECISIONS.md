@@ -347,6 +347,18 @@
 
 ---
 
+### D-48 living preset 开 fs / fs-search / web，shell 与子代理继续关（2026-11-18）
+
+**选**：preset 挂 `tool-fs`（read / read_image / write / edit）、`tool-fs-search`（glob / grep）、`tool-web`（web_fetch / web_search）；写由宿主 `sandboxPolicy` 收口到会话 cwd 与 /tmp。
+
+**放弃**：只加一个读图工具；开放 `bash` / `pwsh` / `subagent` / `workflow`；把软屏蔽清单当结构边界。
+
+**理由**：主人会发图片和文件，读图读文件是合法需求，必须给通道。软屏蔽清单从未拦 `read`——真正缺的是 web profile 把编码工具移进 preset 后，living 组合里根本没挂 `tool-fs`。窄口保留在真正的越权面：shell、子代理、工作流、记忆写回。
+
+**翻案**：出现非 shell 不可的能力（转码、浏览器自动化）时单独评估 `tool-bash` + 沙箱，不要顺手放开子代理。
+
+---
+
 ## 附：被明确否掉的方案（一句话备忘）
 
 | 方案 | 否掉的原因 |

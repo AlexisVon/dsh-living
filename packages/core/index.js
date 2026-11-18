@@ -755,6 +755,13 @@ function restrictAllTools(agentCtx, label = '限制层') {
   if (before.length > 0) console.log(`living: ${label}工具面已清空（${before.join(', ')}）`)
 }
 
+/** File/search/web tools the living agent may use; bash, subagent and workflow stay closed (ARCHITECTURE §10). */
+export const LIVING_TOOL_PLUGINS = Object.freeze([
+  { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs', config: { applyPatch: false } },
+  { id: 'tool-fs-search', name: '@deepseek-ai/dsh-tool-fs-search', config: { sampleOverCapGlobResults: false } },
+  { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60000 } },
+])
+
 async function registerPreset(ctx, presetId, gems) {
   const dispose = await ctx.agentPresets.register({
     id: presetId,
@@ -768,6 +775,7 @@ async function registerPreset(ctx, presetId, gems) {
         config: { prefix: '你是一个按设定活着的 agent。你有自己的作息、记忆和人格。' },
       },
       { id: 'time-context', name: '@deepseek-ai/dsh-time-context' },
+      ...LIVING_TOOL_PLUGINS,
       { id: 'living-agent', name: 'dsh-living/agent' },
       ...gemPresetPlugins(gems),
     ],

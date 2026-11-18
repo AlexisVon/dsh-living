@@ -557,13 +557,24 @@ POST /living/outbox/out_9/ack     { "ok": true, "external_id": "dm_999" }
 
 ## 10. `living` preset 的工具面
 
-| 允许 | 禁止 |
-|---|---|
-| `living_state` `living_journal` `living_mark` `living_plan` | `bash` / `pwsh` |
-| `browser_*`（CDP） | 任意路径 `fs` 写 |
-| `video_watch` / `web_fetch` / `data_query` | `subagent` / `workflow`（绕开限制） |
-| 宝石提供的工具（按启用的宝石） | 未启用宝石的工具 |
-| `living_recall` / `living_events`（只读）· `living_import`（只进不出） | 任何写回/修改记忆的工具 |
+允许：
+
+- `living_state` / `living_journal` / `living_mark` / `living_plan` / `living_send` / `living_web_fetch`
+- `living_recall` / `living_events`（只读）· `living_import`（只进不出）
+- `read` / `read_image` / `write` / `edit`（写由会话 cwd 沙箱收口到 workspace 与 /tmp）
+- `glob` / `grep`
+- `web_fetch` / `web_search`
+- 宝石提供的工具（按启用的宝石）
+
+禁止：
+
+- `bash` / `pwsh`
+- 沙箱外的任意路径 `fs` 写
+- `subagent` / `workflow`（绕开限制）
+- 未启用宝石的工具
+- 任何写回/修改记忆的工具
+
+工具组由 preset 组合钉死（D-31、D-48）；web profile 把编码类工具从宿主平面挪进 preset，所以不在组合里的工具（如 `bash`）连注册都不存在。
 
 ## 11. 失败与降级
 
