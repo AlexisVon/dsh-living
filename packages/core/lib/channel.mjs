@@ -86,7 +86,30 @@ export function createChannel({
       const result = await store.ackOutbox({ id, ok: ack.ok, code: ack.code, externalId: ack.external_id, nowMs })
       if (ack.quota) await store.setState(`gemQuota.${gem}`, { ...ack.quota, reportedAt: nowMs })
       if (ack.ok) onGemSuccess?.(gem)
-      else onGemFailure?.(gem, ack.code ?? 'unknown', nowMs)
+      else {
+        onGemFailure?.(gem, ack.code ?? 'unknown', nowMs)
+        const row = result.duplicate ? null : store.getOutbox(id)
+        if (row) {
+          await store.appendEvent({
+            kind: 'change',
+            ts: nowMs,
+            source: gem,
+            payload: {
+              text: `系统：外发失败 ${gem} → ${row.to ?? '(未知目标)'}（${ack.code ?? 'unknown'}）${result.retryable ? '，稍后自动重试' : ''}`,
+              from: { id: 'system', name: '系统' },
+              meta: {
+                silent: true,
+                system: true,
+                outboxId: id,
+                gem,
+                code: ack.code ?? 'unknown',
+                retryable: result.retryable,
+                target: row.to ?? null,
+              },
+            },
+          })
+        }
+      }
       return { ok: true, id, retryable: result.retryable, duplicate: result.duplicate }
     },
   }

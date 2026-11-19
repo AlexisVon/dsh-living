@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.7 — 2026-11-19
+
+- 外发 ack 失败写入 silent `change` 事件（含 gem/目标/错误码/是否重试），agent 下一轮可见，不再把 approved 当已发送。
+- `dsh-gem-bili` 0.2.1：分享视频不再误判为系统通知（保留主人/trusted）；`at/reply` 通知读 `at_time`/`reply_time` 并修正 rpid 回退；`comment:BV...` 自动解析为视频评论；私信轮询默认 60s。
+- 测试：core 329 / gem-bili 35。
+
 ## 0.3.6 — 2026-11-19
 
 - 白名单改为单级：任何 visibility 命中白名单都直接发，规则表与限制层都跳过。

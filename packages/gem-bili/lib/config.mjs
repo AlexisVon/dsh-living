@@ -54,7 +54,7 @@ export function saveCredential(cred, home = gemHome()) {
 export function loadConfig(home = gemHome()) {
   const file = readJson(join(home, 'config.json'), {}) ?? {}
   return {
-    dmPollSeconds: clampInt(file.dmPollSeconds, 15, 600, 30),
+    dmPollSeconds: clampInt(file.dmPollSeconds, 15, 600, 60),
     noticePollSeconds: clampInt(file.noticePollSeconds, 30, 1800, 60),
     outboxPollSeconds: clampInt(file.outboxPollSeconds, 2, 300, 5),
     dmHistorySeconds: clampInt(file.dmHistorySeconds, 0, 86400, 300),

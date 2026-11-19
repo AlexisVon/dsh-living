@@ -312,10 +312,10 @@ export async function getDynamics({ limit = 10, cred = null, fetchImpl = fetch }
 export function mapMsgfeedItem(item, kind) {
   const user = Array.isArray(item.users) ? (item.users[0] ?? {}) : (item.user ?? item.users ?? {})
   const detail = item.item ?? {}
-  const rpid = Number(detail.rpid ?? detail.target_id ?? detail.source_id ?? item.rpid ?? item.id) || 0
+  const rpid = Number(detail.rpid) || Number(detail.target_id) || Number(detail.source_id) || Number(item.rpid) || Number(item.id) || 0
   const oid = Number(detail.oid ?? detail.subject_id ?? detail.business_id ?? item.oid ?? item.subject_id) || 0
   const rootId = Number(detail.root_id ?? item.root_id) || rpid
-  const timestamp = Number(item.timestamp) || 0
+  const timestamp = Number(item.at_time ?? item.reply_time ?? item.timestamp) || 0
   const ts = timestamp > 0 && timestamp < 1e12 ? timestamp * 1000 : timestamp
   const uri = detail.uri ?? item.uri ?? ''
   // Only video comments have a known reply API in v1; dynamic/article comments would post to the wrong type.
@@ -351,6 +351,8 @@ export async function getMsgfeed(kind, { cred = null, fetchImpl = fetch } = {}) 
  * Judging by the payload shape, not by uid — newer real accounts also have huge uids.
  */
 export function isSystemDm(message) {
+  const type = Number(message?.msg_type) || 1
+  if (type === 7 || type === 8) return false
   let parsed
   try {
     parsed = JSON.parse(message?.content ?? '')
@@ -518,7 +520,9 @@ export function parseTarget(to) {
     return { kind: 'video', bvid }
   }
   if (raw.startsWith('comment:')) {
-    const oid = Number(raw.slice(8))
+    const value = raw.slice(8)
+    if (/^BV[0-9A-Za-z]{10}$/.test(value)) return { kind: 'comment_bvid', bvid: value }
+    const oid = Number(value)
     if (!Number.isInteger(oid) || oid <= 0) throw new BiliError('bad_target', `comment 目标不合法: ${raw}`, { kind: 'config' })
     return { kind: 'comment', oid }
   }
@@ -542,6 +546,10 @@ export async function sendOutbound(to, text, { cred, fetchImpl = fetch } = {}) {
     return sendComment({ oid: video.aid, text: body, cred, fetchImpl })
   }
   if (target.kind === 'comment') return sendComment({ oid: target.oid, text: body, cred, fetchImpl })
+  if (target.kind === 'comment_bvid') {
+    const video = await getVideo(target.bvid, { cred, fetchImpl })
+    return sendComment({ oid: video.aid, text: body, cred, fetchImpl })
+  }
   return sendComment({ oid: target.oid, root: target.root, parent: target.parent, text: body, cred, fetchImpl })
 }
 

@@ -16,6 +16,7 @@ import {
   parseTarget,
   sendComment,
   sendDm,
+  sendOutbound,
 } from '../lib/api.mjs'
 import { dmEvent, failureCodeFor, noticeEvent } from '../lib/channel.mjs'
 import { credentialsFromLoginUrl, credentialsFromTicket, isCompleteCredentials, parseSetCookie, rawQueryParam } from '../lib/credential.mjs'
@@ -93,16 +94,26 @@ test('B站系统通知按报文结构识别，不按 uid 大小', () => {
   assert.equal(isSystemDm({ content: chat }), false)
   assert.equal(isSystemDm({ content: '不是 JSON' }), false)
   assert.equal(isSystemDm({}), false, '空 content 不当系统通知')
+  assert.equal(isSystemDm({ msg_type: 7, content: JSON.stringify({ title: '分享视频' }) }), false, '分享视频不是系统通知')
+  assert.equal(isSystemDm({ msg_type: 8, content: JSON.stringify({ title: '分享视频' }) }), false)
 
   const mapped = mapDmMessages(
     [
       { msg_key: 'sys', timestamp: 20, sender_uid: 30003, msg_type: 1, content: notice },
       { msg_key: 'me', timestamp: 10, sender_uid: 10001, msg_type: 1, content: chat },
+      { msg_key: 'share', timestamp: 30, sender_uid: 10001, msg_type: 7, content: JSON.stringify({ title: '分享视频' }) },
     ],
     { selfUid: '20002' },
   )
   assert.equal(mapped.find((message) => message.key === 'sys').system, true)
   assert.equal(mapped.find((message) => message.key === 'me').system, false)
+  assert.equal(mapped.find((message) => message.key === 'share').system, false)
+
+  const share = mapped.find((message) => message.key === 'share')
+  const shareEvent = dmEvent({ uid: '10001', message: share, ownerUid: '10001' })
+  assert.equal(shareEvent.kind, 'message')
+  assert.equal(shareEvent.meta.trusted, true)
+  assert.equal(shareEvent.meta.reply_to, 'me')
 })
 
 test('系统私信降级成 silent notice：不唤醒、不给回复目标', () => {
@@ -127,6 +138,7 @@ test('@/回复通知事件带 reply 目标', () => {
     },
     'reply',
   )
+  assert.equal(item.ts, 1700000000000)
   assert.equal(item.replyTo, 'reply:100:150:200')
   const event = noticeEvent(item)
   assert.equal(event.external_id, 'bili_reply_3')
@@ -136,6 +148,33 @@ test('@/回复通知事件带 reply 目标', () => {
 
   assert.equal(noticeEvent(item, { ownerUid: '9' }).meta.trusted, true)
   assert.equal(noticeEvent(item, { ownerUid: '99' }).meta.trusted, false)
+})
+
+test('@ 通知读 at_time，target_id=0 时回退 source_id', () => {
+  const at = mapMsgfeedItem(
+    {
+      id: 5,
+      at_time: 1700000000,
+      user: { mid: 9, nickname: '小明' },
+      item: { subject_id: 100, target_id: 0, source_id: 200, root_id: 0, title: '视频', source_content: '@你 看看', uri: 'https://www.bilibili.com/video/BV1xx411c7mD' },
+    },
+    'at',
+  )
+  assert.equal(at.ts, 1700000000000)
+  assert.equal(at.rpid, 200)
+  assert.equal(at.replyTo, 'reply:100:200:200')
+
+  const reply = mapMsgfeedItem(
+    {
+      id: 6,
+      reply_time: 1700000001,
+      user: { mid: 9, nickname: '小明' },
+      item: { subject_id: 100, target_id: 201, root_id: 150, title: '视频', source_content: '回复', uri: 'https://www.bilibili.com/video/BV1xx411c7mD' },
+    },
+    'reply',
+  )
+  assert.equal(reply.ts, 1700000001000)
+  assert.equal(reply.replyTo, 'reply:100:150:201')
 })
 
 test('动态/专栏评论不生成视频回复目标', () => {
@@ -156,6 +195,8 @@ test('发送目标解析：私信 / 评论 / 视频 / 非法', () => {
   assert.deepEqual(parseTarget('uid:123'), { kind: 'dm', uid: '123' })
   assert.deepEqual(parseTarget('reply:1:2:3'), { kind: 'reply', oid: 1, root: 2, parent: 3 })
   assert.deepEqual(parseTarget('bvid:BV1xx411c7mD'), { kind: 'video', bvid: 'BV1xx411c7mD' })
+  assert.deepEqual(parseTarget('comment:123'), { kind: 'comment', oid: 123 })
+  assert.deepEqual(parseTarget('comment:BV1xx411c7mD'), { kind: 'comment_bvid', bvid: 'BV1xx411c7mD' })
   assert.throws(() => parseTarget('@someone'), /无法识别/)
 })
 
@@ -296,6 +337,25 @@ test('公开评论带 dm 风控参数与 WBI 签名', async () => {
   assert.ok(url.url.includes('dm_img_str='))
   assert.equal(url.options.body.get('root'), '20')
   assert.equal(url.options.body.get('parent'), '30')
+})
+
+test('comment:BV 先解析 aid 再发视频评论', async () => {
+  const calls = []
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), options })
+    if (String(url).includes('/x/web-interface/nav')) {
+      return new Response(JSON.stringify({ code: 0, data: { wbi_img: { img_url: 'https://x/7cd084941338484aae1ad9425b84077c.png', sub_url: 'https://x/4932caff0ff746eab6f01bf08b70ac45.png' } } }), { status: 200 })
+    }
+    if (String(url).includes('/x/web-interface/view')) {
+      return new Response(JSON.stringify({ code: 0, data: { aid: 100, bvid: 'BV1xx411c7mD' } }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ code: 0, data: { rpid: 99 } }), { status: 200 })
+  }
+  const cred = { sessdata: 's', bili_jct: 'j', dedeuserid: '5' }
+  const result = await sendOutbound('comment:BV1xx411c7mD', '评论', { cred, fetchImpl })
+  assert.equal(result.externalId, '99')
+  const add = calls.find((call) => call.url.includes('/x/v2/reply/add'))
+  assert.equal(add.options.body.get('oid'), '100')
 })
 
 test('uid → 昵称：card API 映射', async () => {

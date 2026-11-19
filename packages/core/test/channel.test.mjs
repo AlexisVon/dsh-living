@@ -135,6 +135,9 @@ test('outbox：pull → ack 全链；失败回执决定是否重投', async (t) 
     nowMs: T0 + 6 * MIN,
   })
   assert.equal(retry.retryable, true)
+  const [failure] = store.listEvents({ kind: 'change', limit: 5 })
+  assert.match(failure.payload.text, /外发失败 bili/)
+  assert.equal(failure.payload.meta.retryable, true)
 })
 
 test('ack：非法回执按协议拒绝', async (t) => {

@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 A runtime for an agent that **lives by its own settings**: its own schedule, memory and persona, connected to the real world through **WorldGem**.
 
-> Status: v0.3.6. The core, protocol and three real gems (Bilibili / WeChat / PetKit feeder) are implemented. Gems are downloaded from npm into living's own directory and do not add DSH plugin entries.
+> Status: v0.3.7. The core, protocol and three real gems (Bilibili / WeChat / PetKit feeder) are implemented. Gems are downloaded from npm into living's own directory and do not add DSH plugin entries.
 
 ## What it is
 
