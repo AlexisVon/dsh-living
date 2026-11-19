@@ -23,6 +23,8 @@ import { findScope } from './lib/host-scope.mjs'
 import { createAdjudicator } from './lib/adjudicator.mjs'
 import { createPersonaEvolver, SELF_PRESET_PLUGINS } from './lib/persona-evolve.mjs'
 import { createMemoryExtractor, MEMORY_PRESET_PLUGINS } from './lib/memory-extract.mjs'
+import { createRecollector } from './lib/recollector.mjs'
+import { RECOLLECT_DEFAULTS, RECOLLECT_PRESET_PLUGINS } from './lib/recollect.mjs'
 import { allocateLivingSessionTitle } from './lib/session-title.mjs'
 import { LIMITER_PRESET_PLUGINS } from './lib/limiter.mjs'
 import { autoWakeEstimate, scaledNow } from './lib/clock.mjs'
@@ -56,6 +58,7 @@ export const Config = z.object({
   startupRound: z.boolean().default(true).extra('volatile', true),
   personaMaxChars: z.number().default(6000).extra('volatile', true),
   roundTimeoutMs: z.number().default(600000).extra('volatile', true),
+  recollectTimeoutMs: z.number().default(RECOLLECT_DEFAULTS.timeoutMs).extra('volatile', true),
   presetId: z.string().default('living').extra('volatile', true),
   limiterEnabled: z.boolean().default(true).extra('volatile', true),
   gemSilenceMinutes: z.number().default(10).extra('volatile', true),
@@ -179,6 +182,13 @@ export async function apply(ctx, config) {
     ? extractMemoryRaw(input)
     : Promise.resolve({ ok: false, tokens: 0, error: '记忆整理 preset 未就绪' }))
 
+  const recollectPresetId = `${cfg.presetId}-recollect`
+  let recollectPresetReady = false
+  let recollectImpl = null
+  const recollector = (input) => (recollectPresetReady && recollectImpl
+    ? recollectImpl(input)
+    : Promise.resolve({ outcome: 'error', errorCode: 'recollect_unavailable', tokens: 0, text: '' }))
+
   const session = createSessionRunner(ctx, {
     store,
     home: cfg.home,
@@ -205,11 +215,13 @@ export async function apply(ctx, config) {
     rotateSession: (kind) => session.rotate(kind),
     evolvePersona,
     extractMemory,
+    recollector,
     personaAvailable: () => selfPresetReady,
     config: {
       l0Tokens: cfg.l0Tokens,
       personaMaxChars: cfg.personaMaxChars,
       roundTimeoutMs: cfg.roundTimeoutMs,
+      recollectTimeoutMs: cfg.recollectTimeoutMs,
       gemSilenceMinutes: cfg.gemSilenceMinutes,
       clock: { autoWake },
       startupRound: cfg.startupRound,
@@ -222,6 +234,14 @@ export async function apply(ctx, config) {
     },
   })
   const livingService = runtime.service()
+  recollectImpl = createRecollector(ctx, {
+    workspace,
+    presetId: recollectPresetId,
+    living: livingService,
+    timeoutMs: cfg.recollectTimeoutMs,
+    archive: (sessionId) => archiveSession(ctx, sessionId),
+    logger: console,
+  })
 
   /**
    * Persist one gem token without ever handing it to the browser: the settings
@@ -311,6 +331,15 @@ export async function apply(ctx, config) {
     console.error(`living: 记忆整理 preset 注册失败，睡眠只做轻量整理: ${error.message}`)
   }
   ctx.effect(() => () => disposeMemoryPreset?.().catch(() => {}))
+
+  let disposeRecollectPreset = null
+  try {
+    disposeRecollectPreset = await registerRecollectPreset(ctx, recollectPresetId)
+    recollectPresetReady = true
+  } catch (error) {
+    console.error(`living: 回想 preset 注册失败，回想不可用: ${error.message}`)
+  }
+  ctx.effect(() => () => disposeRecollectPreset?.().catch(() => {}))
 
   try {
     channelSupervisor = createGemChannelSupervisor({
@@ -736,6 +765,18 @@ async function registerMemoryPreset(ctx, presetId) {
     plugins: [...MEMORY_PRESET_PLUGINS],
   })
   console.log(`living: 记忆整理 preset 已注册（${presetId}）`)
+  return dispose
+}
+
+async function registerRecollectPreset(ctx, presetId) {
+  const dispose = await ctx.agentPresets.register({
+    id: presetId,
+    name: 'Living recollect',
+    description: 'Read-only recollection subagent',
+    order: 94,
+    plugins: [...RECOLLECT_PRESET_PLUGINS],
+  })
+  console.log(`living: 回想 preset 已注册（${presetId}）`)
   return dispose
 }
 

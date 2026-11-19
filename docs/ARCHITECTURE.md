@@ -160,6 +160,8 @@ facets(memory_kind, memory_id, dim, value)        -- when/who/what/why/how
 memory_edges(id, from_kind, from_id, relation, to_kind, to_id,
              note, confidence, raw_refs, model, created_at, status)  -- 三段式关系边
 memory_items                                       -- episodes/facts 的统一只读视图
+memory_vectors(source, id, ts, text, model, dim, hash, vector)
+                                                  -- 回想区段预测的 embedding 索引（D-57）
 reports(date, generated_at, live, json, markdown, html)  -- 日报归档，Markdown 为 UI 主视图
 access(memory_kind, memory_id, ts, kind, weight)  -- inject/retrieve/cite/negative/confirm
 cold(keyword, event_ids[3], label_20char, last_ts, importance, fidelity)
@@ -178,6 +180,8 @@ memory_fts(memory_kind, memory_id, tokens)        -- FTS5 检索索引（中文�
 ```
 
 三层在同一个 `life.db`：raw（events + raw_segments）→ normalized（episodes/facts + facets）→ graph（memory_edges）。rest 只采集 raw 和轻量 episodes；夜睡用 `living-memory` 专用无工具 preset 把 pending raw 整理成 items/facets/edges；模型失败 3 次后走确定性 fallback。边是派生数据，召回 G1 沿边扩 1 跳。详见 `docs/R16-MEMORY.md`。
+
+`memory_vectors` 只服务回想子 agent 的时间区段预测，不参与 L0/recall 的事实召回；模型或 URL 变更时整表清空并按需重建。
 
 日报也进 `life.db` 的 `reports` 表（JSON + Markdown + HTML），不再写 `reports/*.json|html|md` 零散文件；UI 日报页按日历选日期，下面直接渲染 Markdown。persona 的 `charter` / `self` / `journal` 也在 `persona_docs` / `journal_entries`；旧 `charter.md` / `self.md` / `journal/*.md` 在启动时一次性导入，之后文件不再写。媒体仍以文件存放，DB 存路径与元数据；宿主 session 日志仍由 DSH 管理。
 
@@ -412,9 +416,9 @@ consolidate(kind)
 ```
 
 - 模式存在 `state['persona.evolve']`：`off` / `night`（默认）；人设页可实时切换。旧的 `all` 按 `night` 处理。
-- 演化 token 计入当日预算；自动演化在预算耗尽时跳过并写 `persona_evolve_skipped`，手动"立即演化"不受 mode/预算闸限制。
+- 演化 token 计入当日预算；自动演化在预算耗尽时跳过并写 `persona_evolve_skipped`；演化只在 sleep 内运行，不再提供独立手动触发按钮。
 - 失败保留旧 self，写 `persona_evolve_failed`；成功写 `persona_evolved {tokens, chars, version}`。
-- 人设页独立一页：charter 编辑（人类写）、self 手工编辑/清空、模式、立即演化、版本轨迹（diff 查看/恢复）、今日 journal（`journal_entries`，按 Markdown 渲染）。占位/空 charter 会显式警告并给模板。
+- 人设页独立一页：charter 编辑（人类写）、self 手工编辑/清空、模式、版本轨迹（diff 查看/恢复）、今日 journal（`journal_entries`，按 Markdown 渲染）。占位/空 charter 会显式警告并给模板。
 - **新 self 只在下次会话挂载时生效**：系统提示词按会话捕获，当前会话仍用旧 self。
 
 ## 8. 预算与审计
@@ -564,7 +568,8 @@ POST /living/outbox/out_9/ack     { "ok": true, "external_id": "dm_999" }
 允许：
 
 - `living_state` / `living_journal` / `living_mark` / `living_plan` / `living_send` / `living_web_fetch`
-- `living_recall` / `living_events`（只读）· `living_import`（只进不出）
+- `living_recollect`（慢回想，唯一记忆查询入口） / `living_events`（只读）· `living_import`（只进不出）
+- 主 agent 不注册 `living_recall` / `living_memory_*`；`living_memory_segments|overview|scan|get` 只在回想子 agent 内可见
 - `read` / `read_image` / `write` / `edit`（写由会话 cwd 沙箱收口到 workspace 与 /tmp）
 - `glob` / `grep`
 - `web_fetch` / `web_search`
@@ -671,7 +676,8 @@ reports/YYYY-MM-DD.html   ← 人看的视图（纯 SQL + 模板）
 ```
 living_query_rounds(since, until, trigger?, outcome?)   → 结构化
 living_stats(days)                                       → 计数/均值/额度
-living_recall(query)                                     → 带 why_recalled
+living_recollect(question, cue?, mode?, detail?)           → summary + primary/backup + evidence
+living_memory_segments(key)  [仅回想子 agent]              → 0–3 个时间区段
 ```
 
 只读、无写工具：写入走内部 events，**不通过工具回写**，否则账本可被自己篡改。

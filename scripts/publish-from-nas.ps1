@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Publish the prebuilt dsh-living 0.3.1 / dsh-gem-petkit 0.1.0 tarballs from a folder.
+  Publish the prebuilt dsh-living 0.3.4 / dsh-gem-petkit 0.1.0 tarballs from a folder.
 
 .DESCRIPTION
   The tarballs are already packed; workspace:* is replaced with dsh-living-protocol@0.2.0.
@@ -8,7 +8,7 @@
 
   Without -Publish it only prints the paths; upload them yourself in this order:
     1. dsh-gem-petkit-0.1.0.tgz
-    2. dsh-living-0.3.1.tgz
+    2. dsh-living-0.3.4.tgz
 
   With -Publish it runs npm publish; the 2FA prompt appears on this machine.
   -Staged adds --staged if your npm CLI supports staged publishing.
@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $PackageDir) { $PackageDir = $PSScriptRoot }
 
 $gem = Join-Path $PackageDir 'dsh-gem-petkit-0.1.0.tgz'
-$core = Join-Path $PackageDir 'dsh-living-0.3.1.tgz'
+$core = Join-Path $PackageDir 'dsh-living-0.3.4.tgz'
 if (-not (Test-Path $gem)) { throw "Missing: $gem" }
 if (-not (Test-Path $core)) { throw "Missing: $core" }
 
@@ -39,7 +39,7 @@ Write-Host "  $core"
 
 if (-not $Publish) {
   Write-Host ''
-  Write-Host 'Upload order: dsh-gem-petkit-0.1.0.tgz first, then dsh-living-0.3.1.tgz.'
+  Write-Host 'Upload order: dsh-gem-petkit-0.1.0.tgz first, then dsh-living-0.3.4.tgz.'
   Write-Host 'To publish from this machine: rerun with -Publish (add -Staged if supported).'
   exit 0
 }
@@ -59,7 +59,7 @@ Write-Host 'Publishing dsh-gem-petkit 0.1.0...'
 & npm @publishArgs $gem
 if ($LASTEXITCODE -ne 0) { throw 'dsh-gem-petkit publish failed' }
 
-Write-Host 'Publishing dsh-living 0.3.1...'
+Write-Host 'Publishing dsh-living 0.3.4...'
 & npm @publishArgs $core
 if ($LASTEXITCODE -ne 0) { throw 'dsh-living publish failed' }
 

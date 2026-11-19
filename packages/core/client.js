@@ -373,6 +373,10 @@ window.__ModuleLoader__.load({
       const [nonce, setNonce] = React.useState(0)
       const [confirmReset, setConfirmReset] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
+      const [confirmSleep, setConfirmSleep] = React.useState(false)
+      const [sleepDialog, setSleepDialog] = React.useState(false)
+      const [sleepBusy, setSleepBusy] = React.useState(false)
+      const [sleepUnlimited, setSleepUnlimited] = React.useState(false)
       const state = useRpc('state', { nonce })
       const gemsRpc = useRpc('gems', { nonce })
       const s = state.value
@@ -381,6 +385,13 @@ window.__ModuleLoader__.load({
       const limits = budget.limits ?? {}
       const upcoming = (s?.schedule ?? []).filter((item) => !item.done && !item.missed)
       const gemHealth = new Map((s?.gems ?? []).map((row) => [row.id, row]))
+      const consolidationLabel = (c) => {
+        if (!c) return '—'
+        const time = c.ts ? clockTime(c.ts) : ''
+        if (c.rawPending > 0 || c.evolution === 'raw_pending') return `${time} · 失眠：raw 剩 ${c.rawPending ?? '?'}，演化跳过`
+        if (c.evolution === 'failed') return `${time} · 整理完成，演化失败`
+        return `${time} · 成功：${c.memoryItems ?? 0} 条 / ${c.memoryEdges ?? 0} 边`
+      }
 
       const toggleSession = () => {
         call('sessionVisibility', { visible: !(session?.visible === true) })
@@ -403,8 +414,30 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(false))
       }
 
+      const runSleep = () => {
+        setSleepBusy(true)
+        call('sleep', { unlimited: sleepUnlimited })
+          .then((result) => {
+            setConfirmSleep(false)
+            if (result?.ok === false) notify(`没睡着：${result.error ?? 'unknown'}`, 'error')
+            else {
+              notify(result.unlimited ? '已开始睡眠（不限制 token）' : '已开始睡眠')
+              setSleepDialog(true)
+            }
+            setNonce((value) => value + 1)
+          })
+          .catch((error) => notify(`睡眠失败：${error.message}`, 'error'))
+          .finally(() => setSleepBusy(false))
+      }
+
       if (state.error) return h('div', { className: 'living-empty' }, `状态读取失败：${state.error}`)
       if (!s) return h('div', { className: 'living-empty' }, '加载中…')
+      const sleepProgress = s.sleepProgress
+      const sleepElapsed = sleepProgress?.startedAt
+        ? Math.max(0, Math.round((Date.now() - sleepProgress.startedAt) / 1000))
+        : 0
+      const stepTone = (stepState) => stepState === 'done' ? 'ok' : stepState === 'active' ? 'warn' : stepState === 'failed' ? 'error' : 'muted'
+      const stepLabel = (stepState) => stepState === 'done' ? '完成' : stepState === 'active' ? '进行中' : stepState === 'failed' ? '失败' : '等待'
 
       return h('div', { className: 'living-grid' },
         h('section', { className: 'living-card' },
@@ -412,6 +445,8 @@ window.__ModuleLoader__.load({
           line('连续失败', s.failures ?? 0),
           line('抑制', s.suppression ? `${s.suppression.reason} · ${relativeTime(s.suppression.since)}` : '—'),
           line('最近 L0', s.lastL0 ? `${s.lastL0.entries} 条 / ${formatNumber(s.lastL0.tokens)} tokens / 冷线索 ${s.lastL0.cold}` : '—'),
+          line('上次整理', consolidationLabel(s.lastConsolidation)),
+          s.sleepLastError ? h('div', { className: 'living-field-error' }, `上次睡眠失败：${s.sleepLastError.error}（${clockTime(s.sleepLastError.ts)}）`) : null,
           s.lastError ? h('div', { className: 'living-field-error' }, `最近错误：${s.lastError}`) : null),
 
         h('section', { className: 'living-card' },
@@ -447,7 +482,18 @@ window.__ModuleLoader__.load({
           line('日程', upcoming.length > 0 ? `${upcoming.length} 项待办` : '无'),
           ...upcoming.slice(0, 4).map((item) => h('div', { key: item.id, className: 'living-row' },
             h('span', { className: 'living-mono' }, new Date(item.at).toLocaleTimeString()),
-            h('span', null, item.intent || item.id)))),
+            h('span', null, item.intent || item.id))),
+          h('div', { className: 'living-controls' },
+            h(Button, {
+              variant: 'outline',
+              size: 'sm',
+              disabled: sleepBusy || s.status === 'SLEEPING',
+              onClick: () => setConfirmSleep(true),
+            }, sleepBusy ? '睡眠中…（可能几分钟）' : '手动睡一觉'),
+            s.sleepProgress
+              ? h(Button, { variant: 'outline', size: 'sm', onClick: () => setSleepDialog(true) }, '睡眠进度')
+              : null),
+          h('div', { className: 'living-field-help' }, '立即采集当前会话、处理全部 pending raw，补齐向量索引，最后演化人格；可能几分钟，token 计入预算。')),
 
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' },
@@ -482,7 +528,45 @@ window.__ModuleLoader__.load({
             h(Button, { key: 'cancel', variant: 'outline', onClick: () => setConfirmReset(false) }, '取消'),
             h(Button, { key: 'ok', variant: 'primary', disabled: busy, onClick: resetBudget }, busy ? '重置中…' : '重置'),
           ],
-        }))
+        }),
+        h(Modal, {
+          open: confirmSleep,
+          title: '现在睡一觉？',
+          description: '立即采集当前会话、处理全部 pending raw，并只在 raw 处理完后演化人格，然后轮换主会话。可能几分钟，token 计入预算；勾选后不因预算中断。',
+          closeLabel: '取消',
+          onClose: () => setConfirmSleep(false),
+          footer: [
+            h(Button, { key: 'cancel', variant: 'outline', onClick: () => setConfirmSleep(false) }, '取消'),
+            h(Button, { key: 'ok', variant: 'primary', disabled: sleepBusy || s.status === 'SLEEPING', onClick: runSleep }, sleepBusy ? '提交中…' : '睡觉'),
+          ],
+        }, h('div', { className: 'living-field' },
+          h(Switch, { checked: sleepUnlimited, label: '不限制 token（清空优先）', onChange: setSleepUnlimited }))),
+        h(Modal, {
+          open: sleepDialog,
+          title: sleepProgress?.running ? '正在睡眠' : '睡眠进度',
+          description: sleepProgress
+            ? (sleepProgress.running
+                ? `当前：${sleepProgress.label}；已用 ${sleepElapsed}s。关闭弹窗后任务继续。`
+                : `上次睡眠${sleepProgress.error ? `失败：${sleepProgress.error}` : '完成'}，用时 ${sleepElapsed}s。`)
+            : '还没有睡眠进度记录。',
+          closeLabel: '关闭',
+          onClose: () => setSleepDialog(false),
+          footer: [h(Button, { key: 'close', variant: 'outline', onClick: () => setSleepDialog(false) }, sleepProgress?.running ? '后台继续' : '关闭')],
+        }, sleepProgress
+          ? h('div', { className: 'living-field' },
+              h('div', { className: 'living-row' },
+                Badge({ tone: sleepProgress.running ? 'warn' : sleepProgress.error ? 'error' : 'ok', children: sleepProgress.running ? '进行中' : sleepProgress.error ? '失败' : '完成' }),
+                h('span', null, sleepProgress.label),
+                h('span', { className: 'living-muted' }, `${sleepElapsed}s`)),
+              sleepProgress.detail ? h('div', { className: 'living-field-help' }, sleepProgress.detail) : null,
+              sleepProgress.progress?.total
+                ? Progress({ used: sleepProgress.progress.processed ?? 0, limit: sleepProgress.progress.total, label: '向量索引' })
+                : null,
+              ...(sleepProgress.steps ?? []).map((step) => h('div', { key: step.key, className: 'living-row' },
+                Badge({ tone: stepTone(step.state), children: stepLabel(step.state) }),
+                h('span', null, step.label))))
+          : h('div', { className: 'living-muted' }, sleepDialog ? '已启动，等待进度…' : '暂无睡眠进度')),
+      )
     }
 
     // ── persona ─────────────────────────────────────────────────────────
@@ -570,21 +654,6 @@ window.__ModuleLoader__.load({
             refresh()
           })
           .catch((err) => setLocalError(`模式更新失败：${err.message}`))
-          .finally(() => setBusy(null))
-      }
-      const evolveNow = () => {
-        setBusy('evolve')
-        setLocalError(null)
-        call('personaEvolveNow')
-          .then((result) => {
-            if (result.ok) {
-              notify(`演化完成${result.tokens ? `（${formatNumber(result.tokens)} tokens）` : ''}`)
-            } else {
-              setLocalError(`演化失败：${result.error ?? result.skipped ?? 'unknown'}`)
-            }
-            refresh()
-          })
-          .catch((err) => setLocalError(`演化失败：${err.message}`))
           .finally(() => setBusy(null))
       }
       const openVersion = (version) => {
@@ -684,15 +753,7 @@ window.__ModuleLoader__.load({
               onClick: () => busy !== 'mode' && setMode(mode),
             }, label))),
           h('div', { className: 'living-field-help' },
-            '演化读取当前 charter/self、今天的 journal，以及热区/情节/事实的权重；产物写入 persona_docs 并记录版本，token 计入当日预算。'),
-          h('div', { className: 'living-controls' },
-            h(Button, {
-              variant: 'outline',
-              size: 'sm',
-              disabled: !state.available || busy === 'evolve',
-              onClick: evolveNow,
-            }, busy === 'evolve' ? '演化中…（约 1 分钟）' : '立即演化'),
-            h('span', { className: 'living-muted' }, '手动演化不受 mode=关闭 限制；自动演化按上面的模式。'))),
+            '演化读取当前 charter/self、今天的 journal，以及热区/情节/事实的权重；产物写入 persona_docs 并记录版本。演化在 sleep 内运行，raw 未清空时跳过；不再单独手动触发。')),
 
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' },
@@ -1011,6 +1072,7 @@ window.__ModuleLoader__.load({
           ['timeScale', '时间倍率', 'number', '', '调试用；1 = 真实时间'],
           ['startupRound', '重启后激活一轮', 'boolean', '', '宿主启动时立刻跑一轮，重新校准时间轴；不影响睡眠'],
           ['roundTimeoutMs', '单轮超时', 'number', 'ms', '超时只取消该轮，不拆会话'],
+          ['recollectTimeoutMs', '回想超时', 'number', 'ms', '硬超时；超时即失败，不重试'],
         ],
       },
       {
@@ -2026,6 +2088,204 @@ window.__ModuleLoader__.load({
           : null)
     }
 
+    function EmbeddingCard() {
+      const remote = useRpc('embedConfig', {}, 10_000)
+      const [draft, setDraft] = React.useState(null)
+      const [models, setModels] = React.useState([])
+      const [busy, setBusy] = React.useState('')
+      const [error, setError] = React.useState(null)
+      const [notice, setNotice] = React.useState(null)
+      const [askRebuild, setAskRebuild] = React.useState(false)
+      const [rebuildStarted, setRebuildStarted] = React.useState(false)
+      React.useEffect(() => {
+        if (remote.value && draft == null) setDraft(remote.value)
+      }, [remote.value, draft])
+      const remoteJob = remote.value?.job ?? null
+      const draftJob = draft?.job ?? null
+      const job = askRebuild && !rebuildStarted
+        ? draftJob
+        : (remoteJob && (!draftJob || (remoteJob.startedAt ?? 0) >= (draftJob.startedAt ?? 0)) ? remoteJob : draftJob)
+      const current = draft == null
+        ? (remote.value ?? {})
+        : {
+            ...(remote.value ?? {}),
+            ...draft,
+            stats: remote.value?.stats ?? draft.stats,
+            job,
+          }
+      const stats = current.stats ?? {}
+      const loaded = remote.value != null
+      const dirty = !askRebuild && loaded && (current.url !== remote.value.url || current.model !== remote.value.model)
+      const update = (patch) => setDraft((previous) => ({ ...(previous ?? remote.value ?? {}), ...patch }))
+      const modelOptions = current.model && !models.includes(current.model)
+        ? [current.model, ...models]
+        : models
+      const indexLabel = current.index
+        ? `${current.index.model ?? '—'}${current.index.digest ? ` · ${String(current.index.digest).slice(0, 12)}` : ''}`
+        : '—'
+      const refresh = () => {
+        setError(null)
+        setNotice(null)
+        setBusy('models')
+        call('embedModels', { url: current.url })
+          .then((result) => {
+            const list = (result.models ?? []).filter((model) => model.embedding === true).map((model) => model.name)
+            setModels(list)
+            if (!current.model && result.selected) update({ model: result.selected })
+            setNotice(`找到 ${list.length} 个 embedding 模型`)
+          })
+          .catch((err) => setError(err.message))
+          .finally(() => setBusy(''))
+      }
+      const save = () => {
+        setError(null)
+        setNotice(null)
+        setBusy('save')
+        call('embedConfigSave', {
+          url: current.url,
+          model: current.model,
+          fallbackDays: current.fallbackDays,
+          minConfidence: current.minConfidence,
+          maxSegmentDays: current.maxSegmentDays,
+        })
+          .then((result) => {
+            setDraft(result)
+            if (result.cleared) {
+              setAskRebuild(true)
+              setRebuildStarted(false)
+              setNotice(null)
+            } else {
+              setNotice(result.signatureUnknown
+                ? '已保存；无法读取模型签名，下次索引时校验'
+                : '已保存；模型签名未变，沿用现有向量')
+            }
+          })
+          .catch((err) => setError(err.message))
+          .finally(() => setBusy(''))
+      }
+      const reindex = () => {
+        setError(null)
+        setNotice(null)
+        setBusy('reindex')
+        call('embedReindex')
+          .then((result) => {
+            if (result.job) update({ job: result.job })
+            setRebuildStarted(true)
+            setAskRebuild(true)
+            setNotice(result.started ? '向量重建已开始（后台）' : '重建任务已在运行')
+          })
+          .catch((err) => setError(err.message))
+          .finally(() => setBusy(''))
+      }
+      const test = () => {
+        setError(null)
+        setNotice(null)
+        setBusy('test')
+        call('embedTest', { url: current.url, model: current.model })
+          .then((result) => setNotice(`测试通过：${result.model} · ${result.dim} 维 · ${result.ms}ms`))
+          .catch((err) => setError(err.message))
+          .finally(() => setBusy(''))
+      }
+      return h('section', { className: 'living-card' },
+        h('div', { className: 'living-card-head' },
+          h('span', null, 'Embedding / 区段预测'),
+          h('span', { className: 'living-muted' }, `当前模型向量 ${formatNumber(stats.current ?? 0)} 条`)),
+        h('div', { className: 'living-fields-grid' },
+          h(Field, { label: 'Ollama URL', help: '默认 http://127.0.0.1:11434；不写死主机' },
+            h(Input, { value: current.url ?? '', onChange: (event) => update({ url: event.target.value }) })),
+          h(Field, { label: '模型', help: '点“刷新”列出模型；默认取第一个有 embedding 能力的' },
+            h('div', { className: 'living-controls' },
+              h('select', {
+                className: 'living-select',
+                value: current.model ?? '',
+                onChange: (event) => update({ model: event.target.value }),
+              },
+                h('option', { value: '' }, '（自动选第一个 embedding 模型）'),
+                ...modelOptions.map((name) => h('option', { key: name, value: name }, name))),
+              h(Button, {
+                variant: 'outline',
+                size: 'sm',
+                disabled: busy === 'models',
+                onClick: refresh,
+              }, busy === 'models' ? '刷新中…' : '刷新'))),
+          h(Field, { label: '兜底天数', help: '没有 embedding 或区段为空时，子 agent 扫最近 N 天；默认 3' },
+            h(Input, {
+              type: 'number',
+              value: current.fallbackDays ?? 3,
+              onChange: (event) => update({ fallbackDays: Number(event.target.value) }),
+            })),
+          h(Field, { label: '最低置信度', help: '低于此值的区段不返回；默认 0.35，未校准，仅用于过滤' },
+            h(Input, {
+              type: 'number',
+              step: '0.05',
+              value: current.minConfidence ?? 0.35,
+              onChange: (event) => update({ minConfidence: Number(event.target.value) }),
+            })),
+          h(Field, { label: '区段最宽天数', help: '单段上限；默认 7 天，不会返回覆盖全集的段' },
+            h(Input, {
+              type: 'number',
+              value: current.maxSegmentDays ?? 7,
+              onChange: (event) => update({ maxSegmentDays: Number(event.target.value) }),
+            }))),
+        dirty ? h('div', { className: 'living-field-help' }, '模型或 URL 有变更；保存后会清空旧向量，并询问是否立即重建') : null,
+        h('div', { className: 'living-controls' },
+          h(Button, { variant: 'primary', disabled: busy === 'save', onClick: save }, busy === 'save' ? '保存中…' : '保存'),
+          h(Button, { variant: 'outline', disabled: busy === 'test', onClick: test }, busy === 'test' ? '测试中…' : '测试'),
+          h(Button, { variant: 'outline', disabled: busy === 'reindex', onClick: reindex }, busy === 'reindex' ? '启动中…' : '校验补齐')),
+        error ? h('div', { className: 'living-field-error' }, error) : null,
+        notice ? h('div', { className: 'living-muted' }, notice) : null,
+        current.job
+          ? h('div', { className: 'living-field' },
+              Progress({
+                used: current.job.processed ?? 0,
+                limit: current.job.total ?? 0,
+                label: current.job.running ? '索引补齐' : current.job.error ? '索引补齐失败' : '索引补齐完成',
+              }),
+              current.job.error ? h('div', { className: 'living-field-error' }, current.job.error) : null)
+          : null,
+        h('div', { className: 'living-field-help' },
+          `全库向量 ${formatNumber(stats.count ?? 0)} 条 · 索引签名 ${indexLabel}；签名变化会清空索引。区段置信度仅用于过滤，不是概率。`),
+        h(Modal, {
+          open: askRebuild,
+          title: rebuildStarted ? '向量库重建' : '向量库需要重建',
+          description: rebuildStarted
+            ? '正在后台重建向量库；可以关闭弹窗，任务会继续。'
+            : '检测到 embedding 模型或 URL 变更，旧向量已清空。是否现在重建？不重建的话，sleep 会全量补齐，期间回想走词法兜底。',
+          closeLabel: '关闭',
+          onClose: () => setAskRebuild(false),
+          footer: rebuildStarted
+            ? [h(Button, {
+                key: 'close',
+                variant: 'outline',
+                onClick: () => setAskRebuild(false),
+              }, current.job?.running ? '后台继续' : '关闭')]
+            : [
+                h(Button, {
+                  key: 'later',
+                  variant: 'outline',
+                  onClick: () => {
+                    setAskRebuild(false)
+                    setNotice('已保存；旧向量已清空，sleep 会全量补齐')
+                  },
+                }, '稍后'),
+                h(Button, {
+                  key: 'now',
+                  variant: 'primary',
+                  disabled: busy === 'reindex',
+                  onClick: reindex,
+                }, busy === 'reindex' ? '启动中…' : '立即重建'),
+              ],
+        }, current.job
+          ? h('div', { className: 'living-field' },
+              Progress({
+                used: current.job.processed ?? 0,
+                limit: current.job.total ?? 0,
+                label: current.job.running ? '重建中' : current.job.error ? '重建失败' : '重建完成',
+              }),
+              current.job.error ? h('div', { className: 'living-field-error' }, current.job.error) : null)
+          : h('div', { className: 'living-muted' }, '尚未开始重建')))
+    }
+
     function MemoryPanel() {
       const stats = useRpc('stats', { days: 1 }, 15_000)
       const [layer, setLayer] = React.useState('items')
@@ -2039,6 +2299,11 @@ window.__ModuleLoader__.load({
       const [result, setResult] = React.useState(null)
       const [searchError, setSearchError] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
+      const [recallQuestion, setRecallQuestion] = React.useState('')
+      const [recallDetail, setRecallDetail] = React.useState('brief')
+      const [recallBusy, setRecallBusy] = React.useState(false)
+      const [recallResult, setRecallResult] = React.useState(null)
+      const [recallError, setRecallError] = React.useState(null)
       const browse = useRpc('memoryBrowse', {
         layer,
         kind: kind === 'all' ? null : kind,
@@ -2055,6 +2320,17 @@ window.__ModuleLoader__.load({
           .then(setResult)
           .catch((err) => setSearchError(err.message))
           .finally(() => setBusy(false))
+      }
+      const recollect = () => {
+        const question = recallQuestion.trim()
+        if (!question) return
+        setRecallError(null)
+        setRecallResult(null)
+        setRecallBusy(true)
+        call('recollect', { question, detail: recallDetail, mode: 'lookup' })
+          .then(setRecallResult)
+          .catch((err) => setRecallError(err.message))
+          .finally(() => setRecallBusy(false))
       }
       const open = (item) => {
         setSelected(item)
@@ -2092,6 +2368,56 @@ window.__ModuleLoader__.load({
           StatTile({ label: '待整理 raw', value: formatNumber(counts.rawPending ?? 0) }),
           StatTile({ label: '记忆条目', value: formatNumber(counts.items ?? 0) }),
           StatTile({ label: '关系边', value: formatNumber(counts.edges ?? 0) })),
+        h(EmbeddingCard),
+        h('section', { className: 'living-card' },
+          h('div', { className: 'living-card-head' },
+            h('span', null, '回想'),
+            h('span', { className: 'living-muted' }, '慢路径 · 计入今日 token')),
+          h('div', { className: 'living-controls' },
+            h('div', { style: { flex: 1, minWidth: 260 } },
+              h(Input, {
+                value: recallQuestion,
+                placeholder: '问它一件需要跨时间/语义回想的事',
+                onChange: (event) => setRecallQuestion(event.target.value),
+                onKeyDown: (event) => { if (event.key === 'Enter') recollect() },
+              })),
+            h(Pill, { active: recallDetail === 'brief', onClick: () => setRecallDetail('brief') }, '简'),
+            h(Pill, { active: recallDetail === 'full', onClick: () => setRecallDetail('full') }, '详'),
+            h(Button, {
+              variant: 'primary',
+              icon: h(IconSearchOutlineRegular, { size: 14 }),
+              disabled: recallBusy || !recallQuestion.trim(),
+              onClick: recollect,
+            }, recallBusy ? '回想中…' : '回想')),
+          recallError ? h('div', { className: 'living-field-error' }, recallError) : null,
+          recallResult
+            ? h('div', { className: 'living-field' },
+                h('div', { className: recallResult.ok ? 'living-muted' : 'living-field-error' }, recallResult.summary),
+                recallResult.primary
+                  ? h('section', { className: 'living-card' },
+                      h('div', { className: 'living-card-head' }, h('span', null, '主选')),
+                      h(MarkdownText, { text: recallResult.primary.answer, labels: MARKDOWN_LABELS }),
+                      h('div', { className: 'living-chips' },
+                        ...(recallResult.primary.evidence ?? []).map((row) => h('span', {
+                          key: `${row.source}:${row.id}`,
+                          className: 'living-chip living-mono',
+                          title: row.text || '',
+                        }, `${row.source}:${String(row.id).slice(0, 10)}`))))
+                  : null,
+                recallResult.backup
+                  ? h('section', { className: 'living-card' },
+                      h('div', { className: 'living-card-head' }, h('span', null, '备选')),
+                      h(MarkdownText, { text: recallResult.backup.answer, labels: MARKDOWN_LABELS }),
+                      h('div', { className: 'living-chips' },
+                        ...(recallResult.backup.evidence ?? []).map((row) => h('span', {
+                          key: `backup:${row.source}:${row.id}`,
+                          className: 'living-chip living-mono',
+                          title: row.text || '',
+                        }, `${row.source}:${String(row.id).slice(0, 10)}`))))
+                  : null,
+                h('div', { className: 'living-muted' },
+                  `${recallResult.scanned ? `扫描 ${recallResult.scanned.scans ?? 0} 次 · ${recallResult.scanned.candidates ?? 0} 条` : ''}${recallResult.scanned?.segmentSource ? ` · 区段 ${recallResult.scanned.segmentSource}/${recallResult.scanned.segments ?? 0}` : ''}${recallResult.usage ? ` · tokens ${formatNumber(recallResult.usage.tokens ?? 0)}` : ''}${recallResult.gaps?.length ? ` · gaps: ${recallResult.gaps.join(', ')}` : ''}`))
+            : null),
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' }, h('span', null, '检索记忆')),
           h('div', { className: 'living-controls' },

@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 10
 
 export function openDatabase(path, { readOnly = false, busyTimeoutMs = 3000 } = {}) {
   if (typeof path !== 'string' || path === '') throw new RangeError('数据库路径必填')
@@ -296,6 +296,24 @@ const MIGRATIONS = [
         created_at INTEGER NOT NULL
       );
       CREATE INDEX idx_journal_entries_date_ts ON journal_entries(date, ts);
+    `)
+  },
+  (db) => {
+    db.exec(`
+      CREATE TABLE memory_vectors (
+        source TEXT NOT NULL,
+        id TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        kind TEXT,
+        text TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        hash TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (source, id)
+      );
+      CREATE INDEX idx_memory_vectors_model_ts ON memory_vectors(model, ts);
     `)
   },
 ]

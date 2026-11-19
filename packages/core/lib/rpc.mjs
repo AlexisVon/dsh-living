@@ -91,6 +91,16 @@ export function createAdminRpc({
       if (endpoint === 'budgetReset') {
         return ok(await runtime.service().resetBudget(String(payload?.reason ?? 'manual')))
       }
+      if (endpoint === 'sleep') {
+        const service = runtime.service()
+        const state = service.manualSleepState()
+        if (state.sleeping) return ok({ ok: false, error: 'already_sleeping' })
+        if (state.busy) return ok({ ok: false, error: 'busy' })
+        const unlimited = payload?.unlimited === true
+        Promise.resolve(service.manualSleep('night', { unlimited }))
+          .catch((error) => console.error(`living: 手动 sleep 失败: ${error.message}`))
+        return ok({ ok: true, started: true, unlimited })
+      }
       if (endpoint === 'dataInfo') {
         if (!layout) return fail('backup_unavailable', '数据目录不可用')
         return ok({ ...dataInfo({ layout, store }), workspace: workspace ?? layout.workspace })
@@ -284,6 +294,12 @@ export function createAdminRpc({
         }
         return ok(gemLogin.cancel(id))
       }
+      if (endpoint === 'embedConfig') return ok(runtime.service().embedConfig())
+      if (endpoint === 'embedConfigSave') return ok(await runtime.service().embedConfigSave(payload ?? {}))
+      if (endpoint === 'embedModels') return ok(await runtime.service().embedModels(payload?.url))
+      if (endpoint === 'embedTest') return ok(await runtime.service().embedTest(payload ?? {}))
+      if (endpoint === 'embedReindex') return ok(await runtime.service().embedReindex({ limit: payload?.limit }))
+      if (endpoint === 'recollect') return ok(await runtime.service().recollect(payload ?? {}))
       if (endpoint === 'reports') return ok(listReports(store))
       if (endpoint === 'report') {
         const date = String(payload?.date ?? '')

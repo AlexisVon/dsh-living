@@ -113,7 +113,7 @@
 **选**：会变的东西一律排在后面。
 **放弃**：把 L0 放在 system prompt 前部。
 **理由**：DeepSeek 是**前缀缓存**——L0 在前部，每次刷新都会废掉整条缓存；在尾部只损失尾巴。
-**补充（2026-11-18）**：L0 只在会话首轮注入一次；同一会话后续轮次不重复，睡眠/重启换会话后的首轮重新注入。连续会话里上一轮的 L0 已在上下文中，重复只增 token；需要回忆时用 `living_recall`。
+**补充（2026-11-18）**：L0 只在会话首轮注入一次；同一会话后续轮次不重复，睡眠/重启换会话后的首轮重新注入。连续会话里上一轮的 L0 已在上下文中，重复只增 token；需要回忆时用 `living_recollect`（D-57 后 `living_recall` 已从主 agent 移除）。
 **翻案**：无。这是硬约束。
 
 ---
@@ -419,6 +419,46 @@
 
 **翻案**：如果归一化摘要丢失了必须保留的原文细节，加一个按 id 读取 journal 原文的工具/指针，不要复制成第二条召回条目。
 
+### D-55 回想：单一工具 + 子 agent + 只读证据面（2026-11-19）
+
+**选**：外部只暴露 `living_recollect`，返回 `summary` + `primary`/`backup`（各带 evidence）+ `scanned`/`gaps`；核心是一个带工具的只读子 agent。子 agent 的工具面**恰好**是 `living_memory_overview` / `living_memory_scan` / `living_memory_get`，其余（MCP、fs、web、`living_recollect` 自身）用 `tools.restrict` 拒绝并断言。扫描源为 events / journal / items；raw 只能经 `rawRefs` 在 `detail:'full'` 时展开 user/assistant/event 文本。主 agent 也能直接调这三个工具，但提示词要求优先 `living_recollect`。
+
+**放弃**：裸 SQL/裸 raw 浏览；无工具的一次性摘要；让子 agent 自报 `scanned`/`gaps`；失败时自动降级或编造备选。
+
+**理由**：“查什么”交给模型，“能查多少、按什么顺序、证据长什么样”留给代码。`scanned`/`gaps` 由 runtime 按实际工具调用回填；`before` 游标把“从现在往前”做成结构；`ok:false` 是合法结果，不重试、不编答案。
+
+**硬边界**：`recollectTimeoutMs`（默认 120s）到点 abort 子 agent；子 agent 的 token 计入当日预算；每次回想写一条 `recollect` 轨迹事件（ok/tokens/scans/candidates）。UI 的“记忆 → 回想”卡片走同一个 admin RPC，同样计预算。
+
+**翻案**：数据量增长后若时间扫描不够，再加 embedding 作为候选生成；接口和证据契约不变。
+
+**翻案（D-57）**：时间范围参数已移除；子 agent 工具面加入 `living_memory_segments`；主 agent 不再直连 `living_memory_*`，也不再注册 `living_recall`。
+
+### D-56 记忆整理以 sleep 为界，一次做完或显式失败（2026-11-19）
+
+**选**：raw / journal 的整理单元是“上次整理（sleep/rest）到现在”，不是自然日。night 时采集当前 session raw + 该区间内每条 journal 的 raw，然后**处理完全部 pending**：journal raw 6 条/批，session/night raw 3 条/批；单批卡住（超时/异常）就跳过并写 `memory_extract_failed`，其余继续；最后仍有 pending 就写 `persona_evolve_skipped`（reason=raw_pending），**不自动演化**。人格演化在 raw 清空后运行，输入用新鲜归一化 digest + 最近 journal 片段（不是完整 journal）。状态页新增“手动睡一觉”；用户可手动重试；人格演化不再单独手动触发。
+
+**放弃**：固定 12 条/晚的条数闸（输入速率大于消化速率，队列永远追不上）；raw 未清空仍自动演化（大 journal 日必撞 context guard）；把 `raw_journal_<id>` 合成 daily 大段（会改逐条去重映射）。
+
+**理由**：sleep 是自然的整理边界；条数闸挡不住增长，只有“清空或显式留下并记录”才能让队列收敛。演化基于处理后的条目，原始 journal 只做语气参考。
+
+**UI 与手动**：状态页“手动睡一觉”异步启动（`sleep` RPC 立即返回 started，状态/轨迹轮询结果），进度弹窗显示采集 / 整理 / 向量补齐 / 演化 / 收尾（向量补齐带进度条）；状态卡显示上次整理成功 / 失眠（raw 剩余 N）/ 演化失败，catastrophic 失败另存 `sleep.lastError`。失眠或演化失败会写一条 silent `change` 事件（“系统：…”），agent 下一轮可见但不被叫醒。手动 sleep 可选 `unlimited`：跳过预算闸、仍计 token，优先清空 backlog。
+
+**翻案**：若单次 sleep 的模型成本不可接受，再加 token 预算并保留 `memory_extract_skipped`，但默认先以“清空”为目标。
+
+### D-57 回想倒置：区段预测 + 子 agent 锁范围 + 可配置兜底（2026-11-19）
+
+**选**：`living_recollect` 不再收 `from`/`to`。子 agent 先调 `living_memory_segments({key})`，由 Ollama embedding 预测最多 3 个时间区段：按 6h 间隔聚类，每段宽度 ≤ `maxSegmentDays`（默认 7），置信度低于 `minConfidence`（默认 0.35）的段不返回，所以结果可以是 0–3 段。然后对每段调 `living_memory_scan({from,to})`，需要时 `living_memory_get`。embed 不可用、区段为空或段内没证据时，子 agent 扫最近 `fallbackDays` 天（默认 3，**可配置**）。子 agent 工具面收口为 segments/overview/scan/get；主 agent 只保留 `living_recollect`，不再注册 `living_recall` 与 `living_memory_*`。
+
+**配置**：`state['embed.config'] = {url, model, fallbackDays, minConfidence, maxSegmentDays, updatedAt}`；`state['embed.index'] = {model, digest, signature, url, dim, updatedAt}` 记录当前向量库对应的模型；`signature` 用 Ollama 的模型 `digest`，没有 digest 时退回 `模型名@URL`。默认 URL `http://127.0.0.1:11434`（不写死主机）；模型默认取 `/api/tags` 里第一个有 `embedding` 能力的。记忆页配置卡支持刷新模型、测试、保存、校验补齐；签名变化即清空 `memory_vectors`，并弹窗询问是否立即重建（带进度条），不立即重建则等 sleep；URL 变了但 digest 相同则沿用向量。
+
+**索引**：`memory_vectors(source, id, ts, text, model, dim, hash, vector)`，索引 events / journal / items 的 800 字头；`model` 列存签名。sleep 做全量补齐：扫 30 天窗口，hash 跳过未变行，每批 16 条落库，完成后清理窗口外旧向量；后台重建未跑时，区段预测每次懒索引最多 8 条。查询只取当前模型向量，余弦暴力 top-K。L0/recall 仍只走 FTS/刻面/图，向量不作为事实源。
+
+**放弃**：主 agent 传时间范围；返回覆盖全集的段；低置信段强行凑满 3 条；写死兜底 3 天；让向量直接进 L0/recall。置信度是未校准的绝对分，只用于过滤，不是概率。
+
+**理由**：“查什么”和“查哪段”都由模型决定，代码只保证段窄、有上限、可失败。没有 embedding 的环境用可调的 `fallbackDays`，而不是被写死的 3 天卡住。
+
+**翻案**：若短查询的余弦仍分不开，先调 `minConfidence` 或换 embedding 模型；不要把区段预测下沉成第二套关键词规则。
+
 ---
 
 ## 附：被明确否掉的方案（一句话备忘）
@@ -428,7 +468,7 @@
 | Tobs / deepseekbot | 记忆与人格不可改，恰好是最关键的两块 |
 | 固定间隔 cron 心跳 | 像闹钟，不像活着 |
 | `ctx.schedule` 当总时钟 | 每次投递都要起一轮，成本失控 |
-| 向量检索记忆 | FTS5 + 刻面够用，且不引入 embedding 依赖 |
+| 向量直接当召回通道（L0/recall） | L0/recall 仍走 FTS/刻面/图；embedding 只做区段预测，见 D-57 |
 | 把记忆旁挂 `dsh-memory` | 记忆所有权分裂 |
 | fork `dsh-wechat` | 背一份要跟上游的债，而我们只要其中 500 行协议层 |
 | `hermes-agent-bin` （AUR 预编译包） | 二进制来自第三方 CI，供应链不可审 |

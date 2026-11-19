@@ -274,13 +274,30 @@ test('reports / report / 未知端点', async (t) => {
   assert.equal(unknown.error.code, 'unknown_endpoint')
 })
 
+test('embedConfig / embedConfigSave 走同一通道', async (t) => {
+  const { handle } = await setup(t)
+  const config = await handle('embedConfig', {})
+  assert.equal(config.ok, true)
+  assert.equal(config.value.url, 'http://127.0.0.1:11434')
+  assert.equal(config.value.fallbackDays, 3)
+  assert.equal(config.value.minConfidence, 0.35)
+  assert.equal(config.value.maxSegmentDays, 7)
+
+  const saved = await handle('embedConfigSave', { fallbackDays: 30, minConfidence: 0.5, maxSegmentDays: 14 })
+  assert.equal(saved.ok, true)
+  assert.equal(saved.value.fallbackDays, 30)
+  assert.equal(saved.value.minConfidence, 0.5)
+  assert.equal(saved.value.maxSegmentDays, 14)
+  assert.equal(saved.value.cleared, false)
+})
+
 test('dataInfo / backup / importBackup / importCancel', async (t) => {
   const { handle, home, layout } = await setup(t)
   const info = await handle('dataInfo', {})
   assert.equal(info.ok, true)
   assert.equal(info.value.dbPath, join(home, 'data', 'life.db'))
   assert.equal(info.value.workspace, layout.workspace)
-  assert.equal(info.value.schemaVersion, 9)
+  assert.equal(info.value.schemaVersion, 10)
 
   const backup = await handle('backup', {})
   assert.equal(backup.ok, true)

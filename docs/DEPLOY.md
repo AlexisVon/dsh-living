@@ -1,6 +1,6 @@
 # 部署与验收手册
 
-2026-11-19 · 适用 `dsh-living` v0.2.0 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
+2026-11-19 · 适用 `dsh-living` v0.3.4 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
 
 ## 1. 开发环境（隔离 DSH_HOME）
 
@@ -64,6 +64,14 @@ $.home missing required value (at home)
 
 > ⚠️ **不要把主 home 的 `.credentials.yaml` 复制到 dev home**。同一份 OAuth 刷新令牌被两个 `DSH_HOME` 共用时，一边刷新会让另一边失效（R3 复测中事件轮成功、心跳轮 `provider_auth` 即此原因）。dev profile 请单独登录。
 
+## 3.1 可选：Ollama embedding（回想区段预测）
+
+- 区段预测走 Ollama `/api/embed`；默认 URL `http://127.0.0.1:11434`，不写死宿主。
+- `embed.index` 记录当前向量库的模型、digest 签名与维度；签名变化即失效，URL 变了但 digest 相同则沿用。
+- 记忆页 → “Embedding / 区段预测”：填 URL、点“刷新”选模型（默认第一个有 `embedding` 能力的）、保存。URL/模型变更会清空 `memory_vectors`，并弹窗询问是否立即重建（带进度条）；不立即重建则等 sleep 补齐。
+- 没有 Ollama 也能用：子 agent 退到词法兜底，再不行扫最近 `fallbackDays` 天（默认 3）。无 embed 环境建议把兜底调大（如 30 天）。
+- sleep 做全量补齐：30 天窗口、hash 跳过未变行、每批 16 条落库；首次约 4 分钟，之后只处理新增。区段预测在后台重建未跑时每次懒索引 8 条。
+
 ## 4. 冒烟与加速
 
 - 想快速看日边界/夜睡：`timeScale: 60`（1 真实秒 = 60 仿真秒，本地日历日照常翻页）
@@ -85,9 +93,9 @@ curl -s -X POST http://127.0.0.1:3099/living/ingest \
 |---|---|
 | B-1 | 一轮耗时秒级；会话日志含 `turn/start`、`assistant/message`、`tool/call`、`turn/end` |
 | B-2 | `budget.tokensUsed` 随轮次增长；最后一次调用超过 `roundTokens` 时本轮 `context_guard`，handoff + rest + 换会话，下一轮照跑；只有日预算耗尽才 `BUDGET_HOLD` |
-| 记忆三层 | schema v9；rest 后 `raw_segments` 出现 pending；夜睡后 processed 且 `memory_items` / `memory_edges` 增长；日志有「记忆整理 preset 已注册」 |
+| 记忆三层 | schema v10；rest 后 `raw_segments` 出现 pending；夜睡后 processed 且 `memory_items` / `memory_edges` 增长；日志有「记忆整理 preset 已注册」 |
 | 日报/轨迹 | 日报页是月历，存在日报的日期有标记，选中后在下方渲染 Markdown；轨迹含 `auto_grid` / `auto_hit` / `agent_mark` / 外发条目，外发 tab 已移除 |
-| persona DB | schema v9；`persona_docs` 有 charter/self，`journal_entries` 有当天内容；旧 md 文件只做一次性导入 |
+| persona DB | schema v10；`persona_docs` 有 charter/self，`journal_entries` 有当天内容；旧 md 文件只做一次性导入 |
 | B-3 | 模型失败时 `outcome=error`、`errorCode` 在码表内；连续 3 次 → `DEGRADED` |
 | B-4 | 预算/自唤醒上限/退避抑制在状态变化时写一条 `round_suppressed`，恢复写 `round_resumed`；正常 cooldown 不写 |
 | B-7 | 一次 ingest 只起 1 轮；之后 10 个 tick 轮次不增加 |
@@ -228,7 +236,7 @@ whitelistJson: '["uid:<对方的 B站 uid>","me"]'
 ```
 $DSH_HOME/living/
   data/
-    life.db              # 记忆、人格、日报、外发（schema v9）
+    life.db              # 记忆、人格、日报、外发（schema v10）
     gems/<id>/           # config.json、凭据、media
     backups/             # 手动备份与导入前自动备份
     imports/             # 待替换的导入库

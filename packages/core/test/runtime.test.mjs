@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { createStore } from '../lib/store.mjs'
 import { createRuntime, RUNTIME_STATUS } from '../lib/runtime.mjs'
 import { collectMemoryItems } from '../lib/memory.mjs'
-import { createClockState } from '../lib/clock.mjs'
+import { encodeVector } from '../lib/embed.mjs'
+import { createClockState, dayKey } from '../lib/clock.mjs'
 import { gemNotifyPolicies } from '../lib/gems.mjs'
 
 const TZ = 480
@@ -41,7 +42,7 @@ function baseConfig(over = {}) {
   }
 }
 
-async function setup(t, { config = {}, runner = null, adjudicate = null, rotateSession = null, evolvePersona = null, extractMemory = null, clock = { now: NOW }, gems = [], seed = {}, wakeSchedule = () => {} } = {}) {
+async function setup(t, { config = {}, runner = null, adjudicate = null, rotateSession = null, evolvePersona = null, extractMemory = null, recollector = null, embedder = null, clock = { now: NOW }, gems = [], seed = {}, wakeSchedule = () => {} } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'living-runtime-'))
   const store = createStore({ path: join(home, 'life.db'), now: () => clock.now })
   for (const [key, value] of Object.entries(seed)) await store.setState(key, value)
@@ -55,6 +56,8 @@ async function setup(t, { config = {}, runner = null, adjudicate = null, rotateS
     rotateSession,
     evolvePersona,
     extractMemory,
+    recollector,
+    embedder,
     now: () => clock.now,
     rng: () => 0,
     logger: { error: () => {}, warn: () => {} },
@@ -74,6 +77,20 @@ function collector() {
     return { tokens: 10, outcome: 'ok', sessionId: 's1' }
   }
   return { calls, runner }
+}
+
+function fakeEmbedder({ throwOnEmbed = false, uniform = false, models = [{ name: 'fake-embed', digest: 'sha256:v1', embedding: true }] } = {}) {
+  return {
+    models,
+    async listModels() {
+      return models
+    },
+    async embed({ input }) {
+      if (throwOnEmbed) throw new Error('embed_down')
+      const texts = Array.isArray(input) ? input : [input]
+      return texts.map((text) => (uniform ? [1, 0] : (String(text).includes('显卡') ? [1, 0] : [0, 1])))
+    },
+  }
 }
 
 test('自动唤醒：起一轮、写锚点与事件、预算计一轮', async (t) => {
@@ -404,6 +421,429 @@ test('rest 生成情节；夜睡产生降维候选', async (t) => {
   const night = await rt.sleep('night')
   assert.ok(night.demotions >= 1)
   assert.ok(store.listCold({ limit: 10 }).length >= 1)
+})
+
+test('sleep 缺 session 时在轨迹写 raw_fallback', async (t) => {
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }) })
+  await store.appendEvent({ id: 'e1', ts: NOW - HOUR, kind: 'message', payload: { text: '早上修显卡' } })
+  await rt.sleep('night')
+  const [event] = store.listEvents({ kind: 'raw_fallback', limit: 10 })
+  assert.ok(event, '应写 raw_fallback')
+  assert.equal(event.payload.kind, 'night')
+  assert.equal(event.payload.reason, 'session_unavailable')
+  assert.equal(event.payload.source, 'events')
+  assert.ok(event.payload.messages >= 1)
+})
+
+test('night 一次处理完全部 pending raw，再用结果演化', async (t) => {
+  const calls = []
+  let evolved = 0
+  const extractMemory = async ({ segments }) => {
+    calls.push(segments.map((segment) => segment.id))
+    return {
+      ok: true,
+      tokens: 5,
+      items: [{
+        kind: 'episode',
+        title: `批次 ${calls.length}`,
+        description: '摘要',
+        importance: 0.5,
+        confidence: 0.8,
+        tsStart: segments[0].tsStart,
+        tsEnd: segments[0].tsStart,
+        raw: segments[0].id,
+        facets: {},
+      }],
+      edges: [],
+    }
+  }
+  const evolvePersona = async () => {
+    evolved += 1
+    return { ok: true, text: 'SELF', tokens: 2 }
+  }
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory, evolvePersona })
+  for (let index = 0; index < 13; index += 1) {
+    await store.appendRawSegment({
+      id: `raw_journal_j${index}`,
+      kind: 'journal',
+      tsStart: NOW - HOUR + index,
+      tsEnd: NOW - HOUR + index,
+      payload: { source: 'journal', messages: [{ role: 'journal', ts: NOW - HOUR + index, text: `日记 ${index}` }] },
+    })
+  }
+  const night = await rt.sleep('night')
+  assert.equal(night.rawPending, 0)
+  assert.equal(night.evolution?.ok, true)
+  assert.equal(evolved, 1)
+  assert.equal(calls.length, 3)
+  assert.equal(store.countRawSegments({ status: 'pending' }), 0)
+})
+
+test('手动 sleep 可选不限制 token：预算耗尽也清空 raw 并演化', async (t) => {
+  let evolved = 0
+  const extractMemory = async ({ segments }) => ({
+    ok: true,
+    tokens: 10,
+    items: [{
+      kind: 'episode',
+      title: 't',
+      description: 'd',
+      importance: 0.5,
+      confidence: 0.8,
+      tsStart: segments[0].tsStart,
+      tsEnd: segments[0].tsStart,
+      raw: segments[0].id,
+      facets: {},
+    }],
+    edges: [],
+  })
+  const evolvePersona = async () => {
+    evolved += 1
+    return { ok: true, text: 'SELF', tokens: 2 }
+  }
+  const { rt, store } = await setup(t, {
+    extractMemory,
+    evolvePersona,
+    seed: { budget: { day: dayKey(NOW, TZ), tokensUsed: 1_000_000, rounds: 0 } },
+  })
+  await store.appendRawSegment({
+    id: 'raw_journal_unlimited',
+    kind: 'journal',
+    tsStart: NOW - HOUR,
+    tsEnd: NOW - HOUR,
+    payload: { messages: [{ role: 'journal', ts: NOW - HOUR, text: 'x' }] },
+  })
+  const result = await rt.service().manualSleep('night', { unlimited: true })
+  assert.equal(result.ok, true)
+  assert.equal(result.unlimited, true)
+  assert.equal(result.rawPending, 0)
+  assert.equal(evolved, 1)
+  assert.equal(rt.snapshot().budget.tokensUsed, 1_000_012)
+})
+
+test('raw 卡住时跳过并记录，pending 未清空则跳过自动演化', async (t) => {
+  let evolved = 0
+  const extractMemory = async () => {
+    throw new Error('memory_extract_timeout')
+  }
+  const evolvePersona = async () => {
+    evolved += 1
+    return { ok: true, text: 'SELF', tokens: 2 }
+  }
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory, evolvePersona })
+  for (let index = 0; index < 6; index += 1) {
+    await store.appendRawSegment({
+      id: `raw_journal_stuck${index}`,
+      kind: 'journal',
+      tsStart: NOW - HOUR + index,
+      tsEnd: NOW - HOUR + index,
+      payload: { source: 'journal', messages: [{ role: 'journal', ts: NOW - HOUR + index, text: `卡住 ${index}` }] },
+    })
+  }
+  const night = await rt.sleep('night')
+  assert.equal(night.rawPending, 6)
+  assert.equal(night.evolution?.skipped, 'raw_pending')
+  assert.equal(evolved, 0)
+  const [skipped] = store.listEvents({ kind: 'persona_evolve_skipped', limit: 5 })
+  assert.equal(skipped.payload.reason, 'raw_pending')
+  const [failed] = store.listEvents({ kind: 'memory_extract_failed', limit: 5 })
+  assert.match(failed.payload.error, /memory_extract_timeout/)
+})
+
+test('memorySegments：自动选第一个 embedding 模型并落向量索引', async (t) => {
+  const { rt, store } = await setup(t, { embedder: fakeEmbedder() })
+  await store.appendEvent({ id: 'e1', ts: NOW - 2 * HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+  await store.appendEvent({ id: 'e2', ts: NOW - HOUR, kind: 'message', payload: { text: '中午吃面条' } })
+
+  const result = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(result.ok, true)
+  assert.equal(result.source, 'embed')
+  assert.equal(result.degraded, false)
+  assert.equal(result.model, 'fake-embed')
+  assert.equal(result.segments.length, 1)
+  assert.ok(result.segments[0].confidence >= 0.35)
+  assert.ok(result.segments[0].from <= NOW - 2 * HOUR)
+  assert.ok(result.segments[0].to >= NOW - HOUR)
+  assert.equal(result.digest, 'sha256:v1')
+  assert.equal(rt.service().embedConfig().model, 'fake-embed')
+  assert.equal(rt.service().embedConfig().index.signature, 'sha256:v1')
+  assert.equal(store.countMemoryVectors({ model: 'sha256:v1' }), 2)
+})
+
+test('memorySegments：embed 失败时词法兜底并标 degraded', async (t) => {
+  const { rt, store } = await setup(t, { embedder: fakeEmbedder({ throwOnEmbed: true }) })
+  await store.appendEvent({ id: 'e1', ts: NOW - 2 * HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+
+  const result = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(result.source, 'lexical')
+  assert.equal(result.degraded, true)
+  assert.match(result.error, /embed_down/)
+  assert.equal(result.segments.length, 1)
+})
+
+test('memorySegments：低于 minConfidence 的区段不返回', async (t) => {
+  const { rt, store } = await setup(t, {
+    embedder: fakeEmbedder({ uniform: true }),
+    seed: { 'embed.config': { model: 'fake-embed', minConfidence: 0.9 } },
+  })
+  await store.appendEvent({ id: 'e1', ts: NOW - 2 * HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+
+  const result = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(result.source, 'none')
+  assert.equal(result.segments.length, 0)
+})
+
+test('memoryScan：from/to 限定区段', async (t) => {
+  const { rt, store } = await setup(t)
+  await store.appendEvent({ id: 'e1', ts: NOW - 3 * HOUR, kind: 'message', payload: { text: '三条前' } })
+  await store.appendEvent({ id: 'e2', ts: NOW - 2 * HOUR, kind: 'message', payload: { text: '两条前' } })
+  await store.appendEvent({ id: 'e3', ts: NOW - HOUR, kind: 'message', payload: { text: '一条前' } })
+  const context = {
+    detail: 'brief',
+    mode: 'lookup',
+    maxScans: 8,
+    stats: { scans: 0, candidates: 0, truncated: false, hitLimit: false, minTs: null, maxTs: null, ranges: [] },
+  }
+
+  const page = rt.service().memoryScan({ sources: ['events'], from: NOW - 2.5 * HOUR, to: NOW - 1.5 * HOUR, limit: 10 }, context)
+  assert.deepEqual(page.rows.map((row) => row.id), ['e2'])
+  assert.deepEqual(context.stats.ranges, [{ from: NOW - 2.5 * HOUR, to: NOW - 1.5 * HOUR }])
+})
+
+test('embedConfigSave：模型变更清空向量，非法值拒绝', async (t) => {
+  const { rt, store } = await setup(t, { embedder: fakeEmbedder() })
+  await store.appendEvent({ id: 'e1', ts: NOW - 2 * HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+  await rt.service().memorySegments({ key: '显卡' })
+  assert.ok(store.countMemoryVectors() > 0)
+
+  const saved = await rt.service().embedConfigSave({ model: 'other-embed' })
+  assert.equal(saved.cleared, true)
+  assert.equal(saved.model, 'other-embed')
+  assert.equal(saved.url, 'http://127.0.0.1:11434')
+  assert.equal(saved.index.model, 'other-embed')
+  assert.equal(saved.index.digest, null)
+  assert.equal(saved.index.signature, 'other-embed@http://127.0.0.1:11434')
+  assert.equal(saved.index.dim, null)
+  assert.equal(saved.job, null)
+  const started = rt.service().embedReindex()
+  await started.job.promise
+  assert.ok(store.countMemoryVectors({ model: 'other-embed@http://127.0.0.1:11434' }) > 0)
+  await assert.rejects(() => rt.service().embedConfigSave({ fallbackDays: 0 }), /fallbackDays/)
+})
+
+test('向量模型变更：旧模型索引清空并按新模型重建', async (t) => {
+  const { rt, store } = await setup(t, {
+    embedder: fakeEmbedder(),
+    seed: { 'embed.config': { model: 'fake-embed' } },
+  })
+  await store.appendEvent({ id: 'e1', ts: NOW - HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+  await store.upsertMemoryVectors([{
+    source: 'events',
+    id: 'old',
+    ts: NOW - HOUR,
+    kind: 'message',
+    text: '旧模型',
+    model: 'sha256:old',
+    dim: 2,
+    hash: 'h',
+    vector: encodeVector([1, 0]),
+    createdAt: NOW,
+  }])
+  await store.setState('embed.index', {
+    model: 'old-embed',
+    digest: 'sha256:old',
+    signature: 'sha256:old',
+    url: 'http://127.0.0.1:11434',
+    dim: 2,
+    updatedAt: NOW,
+  })
+
+  const result = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(result.degraded, true)
+  const job = rt.service().embedConfig().job
+  assert.ok(job)
+  await job.promise
+  assert.equal(store.countMemoryVectors({ model: 'sha256:old' }), 0)
+  assert.ok(store.countMemoryVectors({ model: 'sha256:v1' }) > 0)
+  assert.equal(rt.service().embedConfig().index.model, 'fake-embed')
+})
+
+test('向量索引升级：旧 meta 无签名时保留向量并补签名', async (t) => {
+  const { rt, store } = await setup(t, {
+    embedder: fakeEmbedder(),
+    seed: { 'embed.config': { model: 'fake-embed' } },
+  })
+  await store.appendEvent({ id: 'e1', ts: NOW - HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+  await store.upsertMemoryVectors([{
+    source: 'events',
+    id: 'e1',
+    ts: NOW - HOUR,
+    kind: 'message',
+    text: '早上修显卡散热',
+    model: 'fake-embed',
+    dim: 2,
+    hash: 'h',
+    vector: encodeVector([1, 0]),
+    createdAt: NOW,
+  }])
+  await store.setState('embed.index', { model: 'fake-embed', url: 'http://127.0.0.1:11434', dim: 2, updatedAt: NOW })
+
+  const result = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(result.source, 'embed')
+  assert.equal(result.signature, 'sha256:v1')
+  assert.equal(store.countMemoryVectors({ model: 'fake-embed' }), 0)
+  assert.equal(store.countMemoryVectors({ model: 'sha256:v1' }), 1)
+  assert.equal(rt.service().embedConfig().job, null)
+})
+
+test('向量签名：同名模型 digest 变化时旧向量失效并重建', async (t) => {
+  const embedder = fakeEmbedder()
+  const { rt, store } = await setup(t, {
+    embedder,
+    seed: { 'embed.config': { model: 'fake-embed' } },
+  })
+  await store.appendEvent({ id: 'e1', ts: NOW - HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+  const first = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(first.digest, 'sha256:v1')
+  const oldSignature = rt.service().embedConfig().index.signature
+  assert.ok(store.countMemoryVectors({ model: oldSignature }) > 0)
+
+  embedder.models[0].digest = 'sha256:v2'
+  const second = await rt.service().memorySegments({ key: '显卡' })
+  assert.equal(second.degraded, true)
+  const job = rt.service().embedConfig().job
+  assert.ok(job)
+  await job.promise
+  const state = rt.service().embedConfig()
+  assert.equal(state.index.digest, 'sha256:v2')
+  assert.equal(store.countMemoryVectors({ model: oldSignature }), 0)
+  assert.ok(store.countMemoryVectors({ model: 'sha256:v2' }) > 0)
+})
+
+test('夜睡：全量补齐向量、清理窗口外旧向量并记录进度', async (t) => {
+  const { rt, store } = await setup(t, {
+    embedder: fakeEmbedder(),
+    seed: { 'embed.config': { model: 'fake-embed' } },
+  })
+  await store.appendEvent({ id: 'e1', ts: NOW - HOUR, kind: 'message', payload: { text: '早上修显卡散热' } })
+  await store.appendEvent({ id: 'old', ts: NOW - 40 * DAY, kind: 'message', payload: { text: '很久以前' } })
+  await store.upsertMemoryVectors([{
+    source: 'events',
+    id: 'old',
+    ts: NOW - 40 * DAY,
+    kind: 'message',
+    text: '很久以前',
+    model: 'sha256:v1',
+    dim: 2,
+    hash: 'h',
+    vector: encodeVector([0, 1]),
+    createdAt: NOW,
+  }])
+  await store.setState('embed.index', {
+    model: 'fake-embed',
+    digest: 'sha256:v1',
+    signature: 'sha256:v1',
+    url: 'http://127.0.0.1:11434',
+    dim: 2,
+    updatedAt: NOW,
+  })
+
+  const result = await rt.consolidate('night', NOW)
+  assert.equal(result.embedIndex.error, undefined)
+  assert.ok(result.embedIndex.indexed >= 1)
+  assert.equal(result.embedIndex.pruned, 1)
+  assert.equal(store.countMemoryVectors({ model: 'sha256:v1' }), result.embedIndex.indexed)
+  const progress = rt.snapshot().sleepProgress
+  assert.equal(progress.running, false)
+  assert.equal(progress.step, 'done')
+  assert.ok(progress.steps.every((step) => step.state === 'done'))
+})
+
+test('recollect：成功返回主备、扫描统计并计 token', async (t) => {
+  let rt
+  let seenTimeout = null
+  let seenPrompt = null
+  const recollector = async ({ context, timeoutMs, prompt }) => {
+    seenTimeout = timeoutMs
+    seenPrompt = prompt
+    const page = rt.service().memoryScan({ sources: ['events'], limit: 10 }, context)
+    const evidence = [{ source: 'events', id: page.rows[0].id, ts: page.rows[0].ts }]
+    return {
+      outcome: 'ok',
+      tokens: 123,
+      text: JSON.stringify({
+        ok: true,
+        summary: '总结',
+        primary: { answer: '主答案', confidence: 'high', evidence },
+        backup: { answer: '备选答案', evidence },
+      }),
+    }
+  }
+  const setupResult = await setup(t, { recollector, config: { recollectTimeoutMs: 5000 } })
+  rt = setupResult.rt
+  const { store } = setupResult
+  await store.appendEvent({ id: 'e1', ts: NOW - HOUR, kind: 'message', payload: { text: '早上修显卡' } })
+  const result = await rt.service().recollect({ question: '我早上修了什么？' })
+  assert.equal(seenTimeout, 5000)
+  assert.ok(seenPrompt.includes('living_memory_segments'))
+  assert.ok(seenPrompt.includes('最近 3 天'))
+  assert.equal(result.ok, true)
+  assert.equal(result.summary, '总结')
+  assert.equal(result.primary.answer, '主答案')
+  assert.equal(result.backup.answer, '备选答案')
+  assert.equal(result.scanned.scans, 1)
+  assert.ok(result.scanned.candidates >= 1)
+  assert.ok(result.scanned.from >= NOW - 3 * DAY, '无区段扫描默认只回退 fallbackDays')
+  assert.equal(result.usage.tokens, 123)
+  assert.equal(rt.snapshot().budget.tokensUsed, 123)
+  const [event] = store.listEvents({ kind: 'recollect', limit: 10 })
+  assert.equal(event.payload.ok, true)
+  assert.equal(event.payload.tokens, 123)
+})
+
+test('recollect：子 agent 失败返回 ok:false，主备为空，token 计入预算', async (t) => {
+  const recollector = async () => {
+    const error = new Error('recollect_timeout')
+    error.usage = { total: 7 }
+    throw error
+  }
+  const { rt, store } = await setup(t, { recollector })
+  const result = await rt.service().recollect({ question: 'x' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error, 'recollect_timeout')
+  assert.equal(result.primary, null)
+  assert.equal(result.backup, null)
+  assert.equal(result.usage.tokens, 7)
+  assert.equal(rt.snapshot().budget.tokensUsed, 7)
+  const [event] = store.listEvents({ kind: 'recollect', limit: 10 })
+  assert.equal(event.payload.ok, false)
+  assert.equal(event.payload.tokens, 7)
+})
+
+test('recollect：输出不合法 → 失败而不是编答案', async (t) => {
+  const recollector = async () => ({ outcome: 'ok', tokens: 3, text: 'not json' })
+  const { rt } = await setup(t, { recollector })
+  const result = await rt.service().recollect({ question: 'x' })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /JSON/)
+  assert.equal(result.primary, null)
+  assert.equal(result.usage.tokens, 3)
+})
+
+test('recollect：预算用尽时直接失败，不调用子 agent', async (t) => {
+  let called = 0
+  const recollector = async () => {
+    called += 1
+    return { outcome: 'ok', tokens: 0, text: '{}' }
+  }
+  const { rt } = await setup(t, {
+    recollector,
+    seed: { budget: { day: dayKey(NOW, TZ), tokensUsed: 1_000_000, rounds: 0 } },
+  })
+  const result = await rt.service().recollect({ question: 'x' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error, 'budget_exhausted')
+  assert.equal(called, 0)
 })
 
 test('宝石 token 运行时更新：旧 token 立即失效，空 token 变未知宝石', async (t) => {

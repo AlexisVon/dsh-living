@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.3.4 — 2026-11-19
+
+- 向量库身份改为模型签名：`embed.index` 记录 `{model, digest, signature, url, dim}`，`memory_vectors.model` 存签名（digest；没有 digest 时 `模型名@URL`）；同名模型重新 pull 导致 digest 变化时，旧向量失效并重建。
+- URL 变化但 digest 相同视为同一套权重，沿用现有向量；选模型/保存时只在签名变化时弹窗询问是否立即重建。
+- 解析不到 digest（非 Ollama 端点或 `/api/tags` 不可用）时退回 `模型名@URL`；暂时读不到签名则不误清，等下次索引校验。
+- UI 显示索引签名前 12 位；保存后提示“签名未变 / 无法读取签名”。
+- 旧 `embed.index` 没有签名时自动补签名并保留现有向量，不因升级重建。
+- 测试：core 328。
+
+## 0.3.3 — 2026-11-19
+
+- 回想倒置：`living_recollect` 不收 from/to；子 agent 先调 `living_memory_segments` 预测 0–3 个时间区段，再用 `living_memory_scan({from,to})` 扫描。区段按 6h 聚类，单段 ≤ `maxSegmentDays`（默认 7），低于 `minConfidence`（默认 0.35）不返回。
+- embedding 不可用或区段为空时扫最近 `fallbackDays` 天（默认 3）；无 embed 环境可在 UI 调大，不写死。
+- 新增 Ollama embedding 配置与 `memory_vectors` 索引：默认 URL `http://127.0.0.1:11434`，模型默认第一个有 embedding 能力的；支持刷新模型、测试、保存、校验补齐。`embed.index` 记录模型/URL/维度，模型变更即清空旧索引。
+- 子 agent 工具面收口到 `living_memory_segments` / `overview` / `scan` / `get`，MCP、文件与网页工具全部拒绝；主 agent 收掉 `living_recall` 与 `living_memory_*`，只留 `living_recollect`。
+- sleep 全量补齐向量：扫描 30 天窗口，按 hash 跳过未变行，每 16 条一批落库；完成后清理窗口外旧向量。embedding 失败只记录，不拖死 sleep。
+- 手动 sleep 增加进度弹窗（采集 → 整理 → 向量补齐 → 演化 → 收尾，含向量进度条）；人格演化独立按钮移除，演化只在 sleep 内运行。
+- 选择/保存新 embedding 模型时，若检测到变更，弹窗询问是否立即全量重建（带进度条）；不立即重建则等 sleep 补齐。
+- 记忆页新增 Embedding 配置卡；回想 token 计入当日预算，并写 `recollect` 轨迹事件。
+- schema v10：新增 `memory_vectors` 与 `embed.index` 元数据。
+- 测试：core 326。
+
+## 0.3.2 — 2026-11-19
+
+- 新增 `living_recollect`：慢路径只读子 agent 做自然语言回想，返回 summary / primary / backup / 证据 / 扫描覆盖；失败合法。
+- sleep/rest 采集缺少 session 文件时写 `raw_fallback` 轨迹事件，不再静默降级。
+- night 不再固定 12 条：一次处理全部 pending raw（journal 6 条/批，其余 3 条/批）；单批卡住跳过并记录，raw 未清空时跳过自动演化，等 UI 手动触发。状态页新增“手动睡一觉”。
+- 人格演化改用新鲜归一化 digest + 最近 journal 片段，上下文守卫提升到 32k，避免大 journal 日必失败。
+- 状态页新增“手动睡一觉”：异步启动，状态卡显示上次整理成功 / 失眠（raw 剩余 N）/ 演化失败；失眠或失败写 silent `change` 事件给 agent。手动 sleep 可选不限制 token（跳过预算闸、仍计 token）。
+- 修正 `lastConsolidation` / persona 最近事件的排序（用 desc 取最新）。
+- 测试：core 310。
+
 ## 0.3.1 — 2026-11-19
 
 - 外发：私聊 + 白名单目标跳过整张规则表（public/group 仍走规则表与限制层）；非白名单私聊不变。

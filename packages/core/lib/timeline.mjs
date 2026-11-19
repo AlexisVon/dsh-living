@@ -20,6 +20,7 @@ const EVENT_CATEGORIES = {
   persona_evolve_failed: 'persona',
   persona_evolve_skipped: 'persona',
   outbound_decision: 'outbound',
+  recollect: 'memory',
   outbound_approved: 'outbound',
   outbound_rejected: 'outbound',
   budget_exhausted: 'system',
@@ -28,6 +29,7 @@ const EVENT_CATEGORIES = {
   round_suppressed: 'system',
   round_resumed: 'system',
   schedule_missed: 'system',
+  raw_fallback: 'system',
 }
 
 function clip(value, max = 300) {
@@ -49,6 +51,8 @@ function eventTitle(event) {
   if (event.kind === 'context_guard') return '上下文保险'
   if (event.kind === 'persona_evolved') return '人格演化'
   if (event.kind === 'outbound_decision') return `外发 · ${payload.decision ?? '?'}`
+  if (event.kind === 'recollect') return `回想 · ${payload.ok ? '成功' : '失败'} · ${payload.scans ?? 0} 次扫描`
+  if (event.kind === 'raw_fallback') return `raw 降级 · ${payload.reason ?? '?'} · ${payload.kind ?? ''}`
   if (event.kind === 'message' || event.kind === 'notice' || event.kind === 'change') {
     return clip(payload.text || payload.meta?.text || event.kind, 120)
   }
@@ -60,6 +64,12 @@ function eventText(event) {
   if (event.kind === 'agent_mark') return clip(payload.text, 500)
   if (event.kind === 'auto_grid') return `${payload.mode ?? ''} · ${payload.sigmaRatio ?? ''}`
   if (event.kind === 'auto_hit') return `点 ${payload.pointIndex ?? '?'} · ${payload.mode ?? ''}`
+  if (event.kind === 'raw_fallback') {
+    return `session=${payload.sessionId ?? 'null'} · source=${payload.source ?? '—'} · ${payload.messages ?? 0} 条消息${payload.error ? ` · ${payload.error}` : ''}`
+  }
+  if (event.kind === 'recollect') {
+    return `tokens=${payload.tokens ?? 0} · candidates=${payload.candidates ?? 0}${payload.truncated ? ' · truncated' : ''}${payload.error ? ` · ${payload.error}` : ''}`
+  }
   return clip(payload.reason || payload.error || payload.text || '', 300)
 }
 

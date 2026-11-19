@@ -369,6 +369,119 @@ export function createStore({ path, now = Date.now } = {}) {
       }))
     },
 
+    countMemoryVectors({ model = null } = {}) {
+      if (model) return db.prepare('SELECT COUNT(*) AS n FROM memory_vectors WHERE model = ?').get(model).n
+      return db.prepare('SELECT COUNT(*) AS n FROM memory_vectors').get().n
+    },
+
+    listMemoryVectorModels() {
+      return db.prepare('SELECT DISTINCT model FROM memory_vectors ORDER BY model').all().map((row) => row.model)
+    },
+
+    memoryVectorStats() {
+      const rows = db.prepare(
+        'SELECT model, COUNT(*) AS n, MIN(ts) AS oldest, MAX(ts) AS newest FROM memory_vectors GROUP BY model ORDER BY model',
+      ).all()
+      const models = {}
+      const stats = { count: 0, models, oldest: null, newest: null }
+      for (const row of rows) {
+        models[row.model] = row.n
+        stats.count += row.n
+        if (stats.oldest == null || row.oldest < stats.oldest) stats.oldest = row.oldest
+        if (stats.newest == null || row.newest > stats.newest) stats.newest = row.newest
+      }
+      return stats
+    },
+
+    listMemoryVectors({ model = null, since = null, limit = 100_000 } = {}) {
+      const where = []
+      const params = []
+      if (model) {
+        where.push('model = ?')
+        params.push(model)
+      }
+      if (Number.isFinite(since)) {
+        where.push('ts >= ?')
+        params.push(since)
+      }
+      params.push(assertLimit(limit))
+      const sql = `SELECT source, id, ts, kind, text, model, dim, hash, vector FROM memory_vectors${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ts DESC LIMIT ?`
+      return db.prepare(sql).all(...params).map((row) => ({
+        source: row.source,
+        id: row.id,
+        ts: row.ts,
+        kind: row.kind,
+        text: row.text,
+        model: row.model,
+        dim: row.dim,
+        hash: row.hash,
+        vector: row.vector,
+      }))
+    },
+
+    listMemoryVectorMeta({ model = null } = {}) {
+      const where = model ? ' WHERE model = ?' : ''
+      const params = model ? [model] : []
+      return db.prepare(`SELECT source, id, ts, model, hash FROM memory_vectors${where}`).all(...params)
+    },
+
+    async upsertMemoryVectors(rows) {
+      const list = Array.isArray(rows) ? rows : []
+      if (list.length === 0) return 0
+      for (const row of list) {
+        if (typeof row?.source !== 'string' || row.source === '') throw new RangeError('vector.source 必填')
+        if (typeof row?.id !== 'string' || row.id === '') throw new RangeError('vector.id 必填')
+        if (typeof row?.model !== 'string' || row.model === '') throw new RangeError('vector.model 必填')
+        if (!Number.isInteger(row?.dim) || row.dim <= 0) throw new RangeError('vector.dim 必须是正整数')
+        if (!row?.vector || row.vector.byteLength !== row.dim * 4) throw new RangeError('vector.vector 长度与 dim 不匹配')
+      }
+      return withWriteLock(() => transaction(db, () => {
+        const statement = db.prepare(
+          `INSERT INTO memory_vectors(source, id, ts, kind, text, model, dim, hash, vector, created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(source, id) DO UPDATE SET
+             ts = excluded.ts,
+             kind = excluded.kind,
+             text = excluded.text,
+             model = excluded.model,
+             dim = excluded.dim,
+             hash = excluded.hash,
+             vector = excluded.vector,
+             created_at = excluded.created_at`,
+        )
+        for (const row of list) {
+          statement.run(
+            row.source,
+            row.id,
+            row.ts,
+            row.kind ?? null,
+            row.text,
+            row.model,
+            row.dim,
+            row.hash,
+            row.vector,
+            row.createdAt,
+          )
+        }
+        return list.length
+      }))
+    },
+
+    async clearMemoryVectors() {
+      return withWriteLock(() => db.prepare('DELETE FROM memory_vectors').run().changes)
+    },
+
+    async relabelMemoryVectors({ from, to } = {}) {
+      if (typeof from !== 'string' || from === '') throw new RangeError('vector.from 必填')
+      if (typeof to !== 'string' || to === '') throw new RangeError('vector.to 必填')
+      return withWriteLock(() => db.prepare('UPDATE memory_vectors SET model = ? WHERE model = ?').run(to, from).changes)
+    },
+
+    async deleteMemoryVectorsBefore(ts) {
+      if (!Number.isFinite(Number(ts))) throw new RangeError('vector cutoff 必填')
+      return withWriteLock(() => db.prepare('DELETE FROM memory_vectors WHERE ts < ?').run(Number(ts)).changes)
+    },
+
     listAllMemoryEdges({ status = 'active', limit = 100 } = {}) {
       const params = []
       let sql = 'SELECT * FROM memory_edges'

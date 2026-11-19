@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { createStore, OUTBOX_LEASE_MS } from '../lib/store.mjs'
 import { tokenizeForIndex } from '../lib/text.mjs'
+import { decodeVector, encodeVector } from '../lib/embed.mjs'
 
 const T0 = 1_700_000_000_000
 
@@ -29,7 +30,7 @@ function open(t, clock = { now: T0 }) {
 test('迁移幂等：重开后 schema 版本与数据都在', async (t) => {
   const { dir, path } = tempPath()
   const first = createStore({ path })
-  assert.equal(first.schemaVersion(), 9)
+  assert.equal(first.schemaVersion(), 10)
   await first.appendEvent({ id: 'ev_1', kind: 'note', payload: { text: '你好' } })
   await first.setState('clock', { nextWakeAt: 123 })
   await first.close()
@@ -39,7 +40,7 @@ test('迁移幂等：重开后 schema 版本与数据都在', async (t) => {
     await second.close()
     rmSync(dir, { recursive: true, force: true })
   })
-  assert.equal(second.schemaVersion(), 9)
+  assert.equal(second.schemaVersion(), 10)
   assert.deepEqual(second.getEvent('ev_1').payload, { text: '你好' })
   assert.deepEqual(second.getState('clock'), { nextWakeAt: 123 })
 })
@@ -318,6 +319,23 @@ test('记忆条目：episode/fact/facets/access/cold/import 往返', async (t) =
   assert.equal(imported.length, 1)
   assert.equal(imported[0].payload.origin, 'note.md')
   assert.equal(store.searchMemory(['导入'], { kinds: ['event'] }).length, 1)
+})
+
+test('memory_vectors：写入、按模型读取、统计与清空', async (t) => {
+  const { store } = open(t)
+  await store.upsertMemoryVectors([
+    { source: 'events', id: 'e1', ts: 100, kind: 'message', text: '显卡', model: 'm1', dim: 2, hash: 'h1', vector: encodeVector([1, 0]), createdAt: 1 },
+    { source: 'journal', id: 'j1', ts: 200, kind: 'journal', text: '面条', model: 'm1', dim: 2, hash: 'h2', vector: encodeVector([0, 1]), createdAt: 1 },
+    { source: 'items', id: 'p1', ts: 300, kind: 'episode', text: '旧模型', model: 'm0', dim: 2, hash: 'h3', vector: encodeVector([0.5, 0.5]), createdAt: 1 },
+  ])
+  const rows = store.listMemoryVectors({ model: 'm1' })
+  assert.deepEqual(rows.map((row) => row.id), ['j1', 'e1'])
+  assert.deepEqual([...decodeVector(rows[1].vector)], [1, 0])
+  assert.deepEqual(store.memoryVectorStats(), { count: 3, models: { m0: 1, m1: 2 }, oldest: 100, newest: 300 })
+  assert.equal(store.countMemoryVectors({ model: 'm1' }), 2)
+  assert.equal(store.listMemoryVectorMeta({ model: 'm1' }).length, 2)
+  assert.equal(await store.clearMemoryVectors(), 3)
+  assert.equal(store.countMemoryVectors(), 0)
 })
 
 test('persona_docs / journal_entries：DB 往返与按日查询', async (t) => {

@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { waitForTurn } from './round.mjs'
 
-export const SELF_EVOLVE_MAX_TOKENS = 8000
+export const SELF_EVOLVE_MAX_TOKENS = 32000
 export const SELF_EVOLVE_TIMEOUT_MS = 90_000
 
 export const SELF_PRESET_PLUGINS = Object.freeze([

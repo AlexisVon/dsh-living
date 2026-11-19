@@ -31,19 +31,6 @@ export function apply(ctx) {
   }))
 
   ctx.tools.register(tool({
-    name: 'living_recall',
-    description: 'Recall memories by cue. Every result carries why_recalled; cold hints are low fidelity.',
-    parameters: objectSchema({ query: { type: 'string', description: 'Cue text, person, or topic.' } }, ['query']),
-    run: async (args) => {
-      const result = living.recall(args.query)
-      if (result.recalled.length === 0 && result.partialHits.length === 0) return '没有想起来相关的事。'
-      const lines = result.recalled.map((entry) => `- (${entry.id}) ${entry.text}\n  想起原因：${entry.why.join(' / ')}`)
-      if (result.partialHits.length) lines.push(`舌尖碎片：${result.partialHits.map((hit) => hit.hint).join('；')}`)
-      return lines.join('\n')
-    },
-  }))
-
-  ctx.tools.register(tool({
     name: 'living_journal',
     description: 'Append one entry to today\'s journal. This is self-narration, not the factual ledger.',
     parameters: objectSchema({ text: { type: 'string', description: 'What to write.' } }, ['text']),
@@ -139,6 +126,18 @@ export function apply(ctx) {
       },
     }, ['gem', 'to', 'visibility']),
     run: async (args) => JSON.stringify(await living.sendOutbound(args), null, 2),
+  }))
+
+  ctx.tools.register(tool({
+    name: 'living_recollect',
+    description: 'Slow, explicit recollection: a read-only subagent predicts time segments, scans events, journal and normalized items within them, and returns a grounded answer with a summary, primary and optional backup. Prefer this for semantic or time-spanning questions. It can fail; on failure primary/backup are null and summary says why. Its tokens count against today\'s budget.',
+    parameters: objectSchema({
+      question: { type: 'string', description: 'What to recollect.' },
+      cue: { type: 'string', description: 'Optional entity or keyword hint.' },
+      mode: { type: 'string', enum: ['lookup', 'timeline'], description: 'lookup = around the question; timeline = rebuild from now backwards.' },
+      detail: { type: 'string', enum: ['brief', 'full'], description: 'full also expands raw evidence text (user/assistant/event only).' },
+    }, ['question']),
+    run: async (args) => JSON.stringify(await living.recollect(args)),
   }))
 
   ctx.tools.register(tool({

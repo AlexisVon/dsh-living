@@ -170,7 +170,11 @@ export function waitForTurn(agent, signal, { contextGuardTokens = null } = {}) {
     const dispose = agent.ctx.on('session/event', onEvent)
     cleanups.push(() => dispose?.())
     if (signal) {
-      const onAbort = () => settle(null, signal.reason instanceof Error ? signal.reason : new Error('round_aborted'))
+      const onAbort = () => {
+        const error = signal.reason instanceof Error ? signal.reason : new Error('round_aborted')
+        error.usage = { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, total: usage.total }
+        settle(null, error)
+      }
       if (signal.aborted) onAbort()
       else {
         signal.addEventListener('abort', onAbort, { once: true })
