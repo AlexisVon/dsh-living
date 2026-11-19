@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createStore } from '../lib/store.mjs'
-import { buildL0, expandGraph, selectL0, collectMemoryItems, formatCold, formatEntry } from '../lib/memory.mjs'
+import { buildL0, expandGraph, selectL0, collectMemoryItems, formatCold, formatEntry, isMetaMemory } from '../lib/memory.mjs'
 import { recall } from '../lib/recall.mjs'
 import { estimateTokens } from '../lib/text.mjs'
 
@@ -77,6 +77,24 @@ test('G1：图关系把邻居条目带进召回', () => {
   assert.equal(result.recalled.length, 2)
   assert.equal(result.recalled.find((item) => item.id === 'ep2').why[0], 'G1:causes')
   assert.equal(result.debug.graphExpanded, 1)
+})
+
+test('G1：元记忆邻居不因关系边复活', () => {
+  const items = [
+    entry({ id: 'ep1', kind: 'episode', text: '修显卡', source: 'episode' }),
+    entry({ id: 'ep2', kind: 'episode', text: '记忆整合自检', source: 'episode', meta: true }),
+  ]
+  const result = {
+    recalled: [{ id: 'ep1', kind: 'episode', text: '修显卡', score: 0.6, why: ['R1:cued_by=显卡'], layer: 'L2' }],
+    partialHits: [],
+    debug: {},
+  }
+  const edgesFor = (kind, id) => (id === 'ep1'
+    ? [{ otherKind: 'episode', otherId: 'ep2', relation: 'causes', confidence: 0.9 }]
+    : [])
+  expandGraph(result, items, edgesFor, { limit: 5 })
+  assert.equal(result.recalled.length, 1)
+  assert.equal(result.debug.graphExpanded, undefined)
 })
 
 test('L0 不超 token 预算，超出即截断', () => {
@@ -197,4 +215,31 @@ test('collectMemoryItems：journal 直接召回，整理后让位给归一化条
   const kept = after.find((item) => item.id === 'ep_j')
   assert.ok(kept, '归一化条目接管召回')
   assert.deepEqual(kept.facets.who, ['郑渊洁'])
+})
+
+test('isMetaMemory：只认自指系统日志', () => {
+  assert.equal(isMetaMemory('记忆整合已完成，items 1→20'), true)
+  assert.equal(isMetaMemory('recall 排序 存在缺陷'), true)
+  assert.equal(isMetaMemory('米糕（=小白）是重点色银渐层'), false)
+})
+
+test('collectMemoryItems：meta 由标题/主语判定，不误伤正文提及', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'living-memory-'))
+  const store = createStore({ path: join(dir, 'life.db') })
+  t.after(async () => {
+    await store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  await store.upsertFact({ id: 'meta_fact', subject: '抽样查询「米糕」', predicate: '捞回', object: '小白', confidence: 0.8, firstSeen: NOW, lastSeen: NOW, source: 'chat' })
+  await store.upsertFact({ id: 'real_fact', subject: '猫 米糕', predicate: '是', object: '重点色银渐层', confidence: 0.8, firstSeen: NOW, lastSeen: NOW, source: 'chat' })
+  await store.appendEpisode({ id: 'meta_ep', tsStart: NOW, title: '夜间校准：记忆整合完成', summary: '米糕的细节都在', importance: 0.9 })
+  await store.appendEpisode({ id: 'real_ep', tsStart: NOW - MIN, title: '主人介绍两只猫', summary: '正文里提到记忆系统，但标题不是系统日志', importance: 0.8 })
+
+  const items = collectMemoryItems(store, { now: NOW })
+  assert.equal(items.find((item) => item.id === 'meta_fact').meta, true)
+  assert.equal(items.find((item) => item.id === 'real_fact').meta, false)
+  assert.equal(items.find((item) => item.id === 'meta_ep').meta, true)
+  assert.equal(items.find((item) => item.id === 'real_ep').meta, false)
+  assert.equal(items.find((item) => item.id === 'real_fact').title, '猫 米糕')
 })

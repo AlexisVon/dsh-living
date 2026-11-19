@@ -461,6 +461,16 @@
 
 **翻案**：若短查询的余弦仍分不开，先调 `minConfidence` 或换 embedding 模型；不要把区段预测下沉成第二套关键词规则。
 
+### D-58 召回：相关度分级 + 分带 tie-break + 元记忆降档（2026-11-19）
+
+**选**：有 cue 时不再用 bigram 覆盖率做 `sem`。相关内容度按字段/位置分级：episode title、fact subject、`target` 命中 = 1.0；正文前 40 字 = 0.75；正文其余（含 facets）= 0.45；多 token 用 idf 加权覆盖，df 在候选池现数。相关度按 0.05 分带，sal / rec / rehearsal / confidence / emotion 以及 strength、journal 折价全部只进**带内有界** tie-break（< 0.05），结构上不能跨档。元记忆由强字段判定：episode title / fact subject（`agent_mark` 用正文）命中作者有限词表（元记忆、自检、校准、记忆整合、记忆系统、记忆检索、记忆注入、注入精简、记忆区、抽样查询、recall 排序/检索/捞、memory.items 等），降到最低档但保留；G1 关系边不回捞 meta 条目。无 cue 的 L0 走原加权路径，完全不变。
+
+**放弃**：提高 `sem` 权重的加权和；只加 idf 或长度饱和；继续让模型自报 importance 决定并列者；删除元记忆；把 embedding 接进 L0/recall。
+
+**理由**：实测 live 583 条候选，单 token cue 下 14/14、13/13 命中全部 `sem = 1`，top-8 与 episode 自报 importance 完全同序；“米糕”的 top-1 把该词放在正文 86% 处，真正讲米糕的 journal 在 13% 处却因通道与折价排 #11。分带后 sal 只能在同档内插队，相关度重新成为主键。9 个 cue 的 gold@8 与 MRR 无一下降，无 cue L0 逐条一致。
+
+**翻案**：同档仍分不开时，先加更强的字段/位置证据（标题、首句、频次），不要再调权重；系统日志误标就改词表并补测试，不要在 recall 里加特判。
+
 ---
 
 ## 附：被明确否掉的方案（一句话备忘）

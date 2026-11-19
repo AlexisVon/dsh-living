@@ -87,3 +87,12 @@ raw → normalized → edge 需要同一事务、同一备份、同一写队列�
 - 夜睡把上一整理窗口内的 journal 写成独立 raw（`raw_journal_<entry id>`），模型整理成 episode/fact；归一化条目引用该 raw 后，直接 journal 条目让位，避免同一条内容出现两次。
 - 记忆整理提示词明确禁止元记忆（整合时间、items/edges 数、自检线索、预算、网格）与工具审计 JSON。
 - 有 cue 时 R3/R4 不能单独让条目浮现；无 cue 的 L0 不变。
+
+## 9. 召回排序：相关度分级与元记忆降档（2026-11-19，D-58）
+
+- 有 cue：episode `title` / fact `subject` / `target` 命中 = 1.0；正文前 40 字 = 0.75；正文其余（含 facets）= 0.45；多 token 用 idf 加权覆盖，df 在候选池现数（约 600 条，单次 recall 多 ~0.6ms）。
+- 相关度按 0.05 分带；sal / rec / rehearsal / confidence / emotion / strength / journal 折价只进带内有界 tie-break（< 0.05），结构上不能跨档。
+- 元记忆由强字段判定：episode title / fact subject（`agent_mark` 用正文）命中作者有限词表（元记忆、自检、校准、记忆整合、记忆系统、记忆检索、记忆注入、注入精简、记忆区、抽样查询、recall 排序/检索/捞、memory.items、lastConsolidationAt、raw_pending、persona_evolve）；降到最低档但保留，不删除。正文提及不算，避免误伤内容型记忆。G1 关系边不回捞 meta 条目。
+- journal 仍只走 R1/R5/R6/R8；0.65 折价只作用于 tie，相关度更高时能排在低相关事实前。
+- 无 cue 的 L0 走原加权路径，逐条不变。
+- 验收：单 token cue 不再全部并列为 sem=1；9 个真实 cue 的 gold@8 / MRR 相对旧实现无一下降；“米糕”由状态 episode 变为身份事实 + 主人消息 + 家庭介绍 journal 在前。

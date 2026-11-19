@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9 — 2026-11-19
+
+- 召回排序重做：单 token 线索按字段/位置分级（title/subject/target 1.0、正文前 40 字 0.75、正文其余 0.45），多 token 用 idf 加权；相关度按 0.05 分带，sal/rec/strength/journal 只进带内有界 tie-break。
+- 元记忆（自检/校准/记忆整合等）由强字段判定，降到最低档但保留；G1 关系边不再回捞 meta 条目。
+- 实测 9 个真实 cue：gold@8 与 MRR 无一下降，无 cue L0 逐条不变；cue recall 583 条候选多 ~0.6ms。
+- 测试：全仓 449（core 338）。
+
 ## 0.3.8 — 2026-11-19
 
 - L0/记忆事件文本带上 `meta.reply_to`（`（回复目标: …）`），agent 不再丢失 @/回复通知里的 root rpid。

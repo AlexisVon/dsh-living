@@ -144,3 +144,40 @@ test('topK 限制正式回忆条数；why 永不为空', () => {
 test('通道表包含 R1–R8 与 G1', () => {
   assert.deepEqual(Object.keys(RECALL_CHANNELS), ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'G1'])
 })
+
+test('单 token：标题命中 > 前 40 字 > 正文', () => {
+  const titled = item({ id: 'titled', kind: 'episode', title: '米糕', text: '米糕：重点色银渐层，懒' })
+  const lead = item({ id: 'lead', text: '米糕是重点色银渐层，懒，爱睡' })
+  const body = item({ id: 'body', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕` })
+  const r = recall({ items: [body, lead, titled], cue: { text: '米糕' }, now: NOW })
+  assert.deepEqual(r.recalled.map((entry) => entry.id), ['titled', 'lead', 'body'])
+})
+
+test('显著度只能在相关度档内插队', () => {
+  const precise = item({ id: 'precise', text: '米糕是重点色银渐层猫', importance: 0.2 })
+  const vague = item({ id: 'vague', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕`, importance: 0.95 })
+  const r = recall({ items: [vague, precise], cue: { text: '米糕' }, now: NOW })
+  assert.deepEqual(r.recalled.map((entry) => entry.id), ['precise', 'vague'])
+})
+
+test('meta 条目降到最低档但保留', () => {
+  const meta = item({ id: 'meta', kind: 'episode', title: '记忆整合自检：米糕', text: '记忆整合自检：米糕', importance: 0.95, meta: true })
+  const real = item({ id: 'real', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕`, importance: 0.2 })
+  const r = recall({ items: [meta, real], cue: { text: '米糕' }, now: NOW })
+  assert.equal(r.recalled[0].id, 'real')
+  assert.ok(r.recalled.some((entry) => entry.id === 'meta'))
+})
+
+test('多 token：稀有 token 权重更高', () => {
+  const common = Array.from({ length: 8 }, (_, index) => item({ id: `c${index}`, text: `散热第 ${index} 次` }))
+  const rare = item({ id: 'rare', text: '显卡' })
+  const r = recall({ items: [...common, rare], cue: { text: '散热 显卡' }, now: NOW })
+  assert.equal(r.recalled[0].id, 'rare')
+})
+
+test('journal 相关度更高时不被 0.65 折价埋没', () => {
+  const journal = item({ id: 'j', kind: 'journal', text: '米糕是重点色银渐层', source: 'journal', confidence: 1, recallChannels: ['R1'] })
+  const fact = item({ id: 'f', kind: 'fact', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕` })
+  const r = recall({ items: [fact, journal], cue: { text: '米糕' }, now: NOW })
+  assert.equal(r.recalled[0].id, 'j')
+})

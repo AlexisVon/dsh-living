@@ -28,7 +28,6 @@ export const RECALL_CHANNELS = Object.freeze({
   G1: { id: 'G1', name: '关系图扩散' },
 })
 
-const R1_MIN = 0.08
 const R2_MIN = 0.25
 const SALIENCE_GATE = 0.6
 const AROUSAL_GATE = 0.5
@@ -39,6 +38,15 @@ const CHAIN_BONUS = 0.12
 const SPONTANEOUS_PROB = 0.5
 // Journal is first-person narrative: recallable, but normalized facts/episodes rank first.
 const JOURNAL_SCORE_FACTOR = 0.65
+// Cue relevance tiers: strong field > lead sentence > body.
+const LEAD_CHARS = 40
+const REL_TIER_FIELD = 1
+const REL_TIER_LEAD = 0.75
+const REL_TIER_BODY = 0.45
+// Relevance bands keep secondary signals from crossing a relevance tier.
+const REL_BAND = 0.05
+const TIE_MAX = REL_BAND - 0.001
+const META_SCORE_FLOOR = 0.021
 
 export function recall({
   items = [],
@@ -57,6 +65,9 @@ export function recall({
   const scene = String(cue.scene ?? '')
   const target = String(cue.target ?? '')
   const hasCue = cueTokens.length > 0 || participants.length > 0 || scene !== '' || target !== ''
+  const cueMode = hasCue
+  const searchOf = createSearchCache()
+  const idf = cueMode && cueTokens.length ? buildIdf(items, cueTokens, searchOf) : null
   const moodKeys = Object.keys(mood ?? {}).filter((k) => Number(mood[k]) > 0)
 
   const earliest = new Map()
@@ -77,19 +88,20 @@ export function recall({
 
     const haystack = [item.text, item.target, item.source, ...facetValues(item.facets)].filter(Boolean).join(' ')
     const why = []
-    let sem = 0
     let emo = 0
     let sal = 0
     let rec = 0
     let ctx = 0
+    let relevance = 0
+    let cueHit = null
 
-    if (can('R1') && cueTokens.length) {
-      sem = overlapScore(cueTokens, haystack)
-      if (sem > R1_MIN) why.push(`R1:cued_by=${cueTokens.find((t) => haystack.toLowerCase().includes(t)) ?? cueTokens[0]}`)
+    if (cueMode && cueTokens.length) {
+      const match = cueRelevance(item, cueTokens, idf, searchOf)
+      relevance = match.relevance
+      cueHit = match.hit
     }
-    if (target && String(item.target ?? '') === target) sem = Math.min(1, sem + 0.5)
-    // Recency/salience only shape cue-less L0; a cue must earn its item through a channel.
-    const cueGated = cueTokens.length > 0 && sem <= R1_MIN
+    if (target && String(item.target ?? '') === target) relevance = Math.max(relevance, 0.95)
+    if (can('R1') && relevance > 0 && cueHit) why.push(`R1:cued_by=${cueHit}`)
 
     if (can('R2') && moodKeys.length && item.affect && Object.keys(item.affect).length) {
       emo = cosine(mood, item.affect)
@@ -98,6 +110,24 @@ export function recall({
         why.push(`R2:mood_congruent=${top}`)
       }
     }
+
+    if (can('R5')) {
+      const who = Array.isArray(item.facets?.who) ? item.facets.who : []
+      if (scene && (item.source === scene || item.facets?.scene === scene)) {
+        ctx = Math.max(ctx, 0.7)
+        if (cueMode) relevance = Math.max(relevance, 0.5)
+        why.push(`R5:scene=${scene}`)
+      }
+      const hit = participants.find((p) => p === item.target || who.includes(p))
+      if (hit) {
+        ctx = 1
+        if (cueMode) relevance = Math.max(relevance, 0.9)
+        why.push(`R5:participant=${hit}`)
+      }
+    }
+
+    // A cue must earn its item through R1/R5; otherwise recency and salience stay silent.
+    const cueGated = cueMode && relevance <= 0
 
     if (can('R3') && !cueGated) {
       rec = recencyScore(item, now)
@@ -120,32 +150,7 @@ export function recall({
       }
     }
 
-    if (can('R5')) {
-      const who = Array.isArray(item.facets?.who) ? item.facets.who : []
-      if (scene && (item.source === scene || item.facets?.scene === scene)) {
-        ctx = Math.max(ctx, 0.7)
-        why.push(`R5:scene=${scene}`)
-      }
-      const hit = participants.find((p) => p === item.target || who.includes(p))
-      if (hit) {
-        ctx = 1
-        why.push(`R5:participant=${hit}`)
-      }
-    }
-
-    let score =
-      weights.sem * sem +
-      weights.emo * emo +
-      weights.sal * sal +
-      weights.rec * rec +
-      weights.reh * rehearsalScore(item.rehearsal) +
-      weights.src * (Number(item.confidence) || 0.75) +
-      weights.ctx * ctx
-
-    // With a clear cue, semantics must dominate; otherwise recency+scene beat relevance.
-    if (cueTokens.length) score *= 0.35 + 0.65 * sem
-    score *= 0.5 + 0.5 * strength
-    if (item.kind === 'journal') score *= JOURNAL_SCORE_FACTOR
+    const score = cueMode ? cueScore({ item, relevance, sal, rec, emo, strength }) : legacyScore({ item, emo, sal, rec, ctx, strength, weights })
 
     if (can('R8') && allowPartial && cueTokens.length) {
       const overlap = overlapScore(cueTokens, haystack)
@@ -162,13 +167,14 @@ export function recall({
     }
 
     if (score <= 0.02 || why.length === 0) continue
-    scored.push(toResult(item, score, why, strength))
+    scored.push(toResult(item, score, why, strength, relevance))
   }
 
   scored.sort((a, b) => b.score - a.score)
 
   // R6: after the head is chosen, adjacent events get one chain bonus each.
   const chained = []
+  const chainBonus = cueMode ? TIE_MAX * 0.5 : CHAIN_BONUS
   if (use('R6')) {
     const head = scored.slice(0, Math.max(1, topK))
     const applied = new Set()
@@ -183,16 +189,18 @@ export function recall({
         if (gap <= 0 || gap > CHAIN_WINDOW_MIN) continue
         const allowed = Array.isArray(item.recallChannels) && item.recallChannels.length ? item.recallChannels : null
         if (allowed && !allowed.includes('R6')) continue
-        const bonus = CHAIN_BONUS * (1 - gap / CHAIN_WINDOW_MIN)
+        const bonus = chainBonus * (1 - gap / CHAIN_WINDOW_MIN)
         const existing = scored.find((r) => r.id === item.id)
         if (existing) {
           if (!applied.has(existing.id)) {
-            existing.score = round3(Math.min(1, existing.score + bonus))
+            existing.score = round3(cueMode ? Math.min(bandTop(existing.relevance), existing.score + bonus) : Math.min(1, existing.score + bonus))
             applied.add(existing.id)
           }
           if (!existing.why.includes('R6:chain')) existing.why.push('R6:chain')
         } else if (!chained.some((c) => c.id === item.id)) {
-          chained.push(toResult(item, bonus, ['R6:chain'], decayedStrength(item, now)))
+          const rel = cueMode && cueTokens.length ? cueRelevance(item, cueTokens, idf, searchOf).relevance : 0
+          const chainScore = cueMode ? bandOf(item, rel) + bonus : bonus
+          chained.push(toResult(item, chainScore, ['R6:chain'], decayedStrength(item, now), rel))
         }
       }
     }
@@ -210,7 +218,7 @@ export function recall({
     if (pool.length) {
       const picked = pool[Math.floor(rng() * pool.length) % pool.length]
       if (!scored.some((r) => r.id === picked.id)) {
-        scored.push(toResult(picked, 0.3, ['R7:spontaneous'], decayedStrength(picked, now)))
+        scored.push(toResult(picked, 0.3, ['R7:spontaneous'], decayedStrength(picked, now), 0))
         scored.sort((a, b) => b.score - a.score)
       }
     }
@@ -231,7 +239,97 @@ export function recall({
   }
 }
 
-function toResult(item, score, why, strength) {
+function buildIdf(items, cueTokens, searchOf) {
+  const df = new Map(cueTokens.map((token) => [token, 0]))
+  for (const item of items) {
+    if (!item || item.suppressed) continue
+    const search = searchOf(item)
+    for (const token of cueTokens) if (search.all.includes(token)) df.set(token, df.get(token) + 1)
+  }
+  const idf = new Map()
+  for (const token of cueTokens) idf.set(token, Math.log(1 + items.length / (1 + df.get(token))))
+  return idf
+}
+
+function cueRelevance(item, cueTokens, idf, searchOf) {
+  let weighted = 0
+  let total = 0
+  let hit = null
+  const search = searchOf(item)
+  for (const token of cueTokens) {
+    const tokenIdf = idf.get(token) ?? 0
+    total += tokenIdf
+    const quality = matchQuality(token, search)
+    if (quality > 0) {
+      weighted += tokenIdf * quality
+      if (!hit) hit = token
+    }
+  }
+  return { relevance: total > 0 ? weighted / total : 0, hit }
+}
+
+function matchQuality(token, search) {
+  if (search.strong && search.strong.includes(token)) return REL_TIER_FIELD
+  if (search.lead.includes(token)) return REL_TIER_LEAD
+  if (search.text.includes(token)) return REL_TIER_BODY
+  if (search.facets.includes(token)) return REL_TIER_BODY
+  return 0
+}
+
+function createSearchCache() {
+  const cache = new Map()
+  return (item) => {
+    let search = cache.get(item)
+    if (!search) {
+      const strong = [item.title, item.target].filter(Boolean).join(' ').toLowerCase()
+      const text = String(item.text ?? '').toLowerCase()
+      const facets = facetValues(item.facets).join(' ').toLowerCase()
+      search = { strong, lead: text.slice(0, LEAD_CHARS), text, facets, all: [strong, text, facets].filter(Boolean).join(' ') }
+      cache.set(item, search)
+    }
+    return search
+  }
+}
+
+function cueScore({ item, relevance, sal, rec, emo, strength }) {
+  const tie = Math.min(
+    1,
+    0.5 * clamp01(sal) +
+      0.2 * clamp01(rec) +
+      0.1 * clamp01(rehearsalScore(item.rehearsal)) +
+      0.1 * clamp01(emo) +
+      0.1 * clamp01(Number(item.confidence) || 0.75),
+  )
+  let tiePart = TIE_MAX * tie * (0.5 + 0.5 * strength)
+  if (item.kind === 'journal') tiePart *= JOURNAL_SCORE_FACTOR
+  let score = bandOf(item, relevance) + tiePart
+  if (item.meta && relevance > 0 && score < META_SCORE_FLOOR) score = META_SCORE_FLOOR
+  return round3(score)
+}
+
+function legacyScore({ item, emo, sal, rec, ctx, strength, weights }) {
+  let score =
+    weights.emo * emo +
+    weights.sal * sal +
+    weights.rec * rec +
+    weights.reh * rehearsalScore(item.rehearsal) +
+    weights.src * (Number(item.confidence) || 0.75) +
+    weights.ctx * ctx
+  score *= 0.5 + 0.5 * strength
+  if (item.kind === 'journal') score *= JOURNAL_SCORE_FACTOR
+  return round3(score)
+}
+
+function bandOf(item, relevance) {
+  if (item.meta) return 0
+  return Math.floor(relevance / REL_BAND + 1e-9) * REL_BAND
+}
+
+function bandTop(relevance) {
+  return Math.floor(relevance / REL_BAND + 1e-9) * REL_BAND + TIE_MAX
+}
+
+function toResult(item, score, why, strength, relevance) {
   return {
     id: item.id,
     kind: item.kind,
@@ -244,6 +342,7 @@ function toResult(item, score, why, strength) {
     uncertain: Number(item.fidelity ?? 1) < 0.7,
     rehearsal: Number(item.rehearsal) || 0,
     eventRefs: item.eventRefs ?? [],
+    relevance: round3(relevance),
   }
 }
 
@@ -278,6 +377,10 @@ function makeHint(item, cueTokens) {
   const label = item.target ? `${item.target}·` : ''
   if (!hit.length) return `${label}${String(item.text ?? '').slice(0, 12)}…`
   return `${label}关于「${hit.slice(0, 2).join('、')}」的那件事`
+}
+
+function clamp01(value) {
+  return Math.min(1, Math.max(0, Number(value) || 0))
 }
 
 function round2(value) {

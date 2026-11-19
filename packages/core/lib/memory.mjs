@@ -12,6 +12,39 @@ export const MEMORY_EVENT_KINDS = Object.freeze(['message', 'notice', 'agent_mar
 
 const JOURNAL_ITEM_LIMIT = 2000
 
+/** Authored-finite markers for self-referential memory-system logs; such items stay recallable but never outrank real memories. */
+const META_HINTS = Object.freeze([
+  '元记忆',
+  '自检',
+  '校准',
+  '记忆整合',
+  '记忆系统',
+  '记忆检索',
+  '记忆注入',
+  '注入精简',
+  '记忆区',
+  '抽样查询',
+  'recall 排序',
+  'recall 检索',
+  'recall 捞',
+  'memory.items',
+  'lastConsolidationAt',
+  'raw_pending',
+  'persona_evolve',
+])
+
+export function isMetaMemory(text) {
+  const value = String(text ?? '').toLowerCase()
+  return META_HINTS.some((hint) => value.includes(hint.toLowerCase()))
+}
+
+/** Only the strong field decides: an episode title / fact subject (or a self-written mark) is a system log. */
+function metaFor(kind, title, text) {
+  if (kind === 'episode' || kind === 'fact') return isMetaMemory(title)
+  if (kind === 'agent_mark') return isMetaMemory(text)
+  return false
+}
+
 export function collectMemoryItems(store, { now = Date.now(), since = null, limit = 500 } = {}) {
   const items = []
   for (const event of store.listEvents({ since, kinds: MEMORY_EVENT_KINDS, limit, order: 'desc' })) {
@@ -35,15 +68,18 @@ export function collectMemoryItems(store, { now = Date.now(), since = null, limi
       eventRefs: imported ? [] : [event.id],
       drivesAction: !imported,
       origin: imported ? 'import' : 'observed',
+      meta: metaFor(imported ? 'fact' : event.kind, undefined, text),
     })
   }
   const normalizedJournalRefs = new Set(store.listJournalRawIds())
   for (const episode of store.listEpisodes({ limit, order: 'desc' })) {
+    const text = [episode.title, episode.summary].filter(Boolean).join('：')
     items.push({
       id: episode.id,
       kind: 'episode',
       layer: 'L2',
-      text: [episode.title, episode.summary].filter(Boolean).join('：'),
+      title: episode.title ?? null,
+      text,
       ts: episode.tsStart,
       lastTs: episode.tsEnd ?? episode.tsStart,
       source: 'episode',
@@ -53,14 +89,17 @@ export function collectMemoryItems(store, { now = Date.now(), since = null, limi
       eventRefs: episode.eventIds,
       drivesAction: true,
       origin: 'observed',
+      meta: metaFor('episode', episode.title, text),
     })
   }
   for (const fact of store.listFacts({ limit })) {
+    const text = `${fact.subject} ${fact.predicate} ${fact.object}`.trim()
     items.push({
       id: fact.id,
       kind: 'fact',
-      layer: classifyLayer({ kind: 'fact', text: `${fact.subject} ${fact.predicate} ${fact.object}` }),
-      text: `${fact.subject} ${fact.predicate} ${fact.object}`.trim(),
+      layer: classifyLayer({ kind: 'fact', text }),
+      title: fact.subject ?? null,
+      text,
       ts: fact.lastSeen ?? fact.firstSeen,
       lastTs: fact.lastSeen ?? fact.firstSeen,
       source: fact.source,
@@ -70,6 +109,7 @@ export function collectMemoryItems(store, { now = Date.now(), since = null, limi
       eventRefs: fact.eventIds,
       drivesAction: true,
       origin: 'observed',
+      meta: metaFor('fact', fact.subject, text),
     })
   }
   for (const entry of store.listJournalEntries({ limit: JOURNAL_ITEM_LIMIT })) {
@@ -129,7 +169,7 @@ export function expandGraph(result, items, edgesFor, { limit = 8, maxSeeds = 5, 
       const key = `${edge.otherKind}:${edge.otherId}`
       if (seen.has(key)) continue
       const item = byKey.get(key)
-      if (!item || item.suppressed) continue
+      if (!item || item.suppressed || item.meta) continue
       const score = Math.min(0.6, (Number(seed.score) || 0.3) * (Number(edge.confidence) || 0.5) * 0.7)
       if (score <= 0.02) continue
       seen.add(key)
