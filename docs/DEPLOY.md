@@ -1,6 +1,6 @@
 # 部署与验收手册
 
-2026-11-19 · 适用 `dsh-living` v0.3.10 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
+2026-11-19 · 适用 `dsh-living` v0.3.11 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
 
 ## 1. 开发环境（隔离 DSH_HOME）
 
@@ -29,6 +29,8 @@ $.home missing required value (at home)
     gemStoreDir: ''              # 留空 = <home>/gems
     timeScale: 1
     tickMs: 60000
+    nightAt: '03:30'             # 本地时间；夜睡触发点
+    nightWindowMinutes: 360      # 触发后的补睡窗口（分钟）
     l0Tokens: 3000
     memoryParamsJson: '{}'        # 记忆策略覆盖，见 2.1；volatile，改后即时生效
     dailyTokens: 2000000
@@ -68,6 +70,13 @@ $.home missing required value (at home)
 | `strength0` / `strengthCap` / `demoteStrength` | 0.85 / 0.95 / 0.15 | `demote ≤ strength0 ≤ cap` | 初始强度、上限、降级线 |
 | `maxItems` / `maxEdges` | 20 / 40 | 5–50 / 5–100 | 单次整理条目/边上限 |
 | `batchJournal` / `batchOther` | 6 / 3 | 1–20 | 夜睡整理批大小 |
+
+### 2.2 作息（夜睡）
+
+- `nightAt`：本地 `HH:MM`，默认 `03:30`；每天一次，触发后开始夜间整理。
+- `nightWindowMinutes`：默认 `360`；错过触发点后仍可补睡的窗口，超时跳过当晚。
+- 没有固定睡眠时长；实际耗时记录在 `state['sleep.last']`（开始/结束/毫秒/成功）并写 `sleep` 事件，状态页显示“上次睡眠 X 分钟”。
+- 配置页「作息与自动唤醒」：实线是触发点，虚框是可触发窗口；图上不画时长。
 
 ## 3. 模型路由必须配好
 

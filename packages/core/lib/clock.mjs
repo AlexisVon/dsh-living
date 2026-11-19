@@ -12,10 +12,16 @@ export const AUTO_NORMAL_SHARE = 0.6
 export const AUTO_GRID_MINUTES = Object.freeze([10, 20, 30, 40, 60])
 export const AUTO_SAMPLE_SECONDS = Object.freeze([30, 60])
 
+/** Parse a local HH:MM string into minutes since midnight. */
+export function parseTimeOfDay(text) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(text ?? '').trim())
+  if (!match) throw new RangeError(`时间必须是 HH:MM: ${text}`)
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
 export const CLOCK_DEFAULTS = Object.freeze({
   nightAtMinutes: 3 * 60 + 30,
   nightWindowMinutes: 360,
-  nightDurationMinutes: 90,
   scheduleGraceMinutes: 30,
   tzOffsetMinutes: null,
   autoWake: Object.freeze({
@@ -184,12 +190,11 @@ export function tick(state, now, env = {}, config = {}, rng = Math.random) {
       s.nightDay = day
       s.lastWakeAt = now
       s.lastWakeKind = 'night'
-      s.sleepingUntil = now + cfg.nightDurationMinutes * MIN
       s.sleepKind = 'night'
       s.nextWakeAt = nextDeadline(s, now, cfg)
       return {
         state: s,
-        decision: { action: 'night', trigger: 'night', detail: { durationMinutes: cfg.nightDurationMinutes } },
+        decision: { action: 'night', trigger: 'night', detail: {} },
         missed,
       }
     }
@@ -380,7 +385,6 @@ function resolveConfig(config = {}) {
   requireRange('tzOffsetMinutes', cfg.tzOffsetMinutes, -840, 840)
   requireRange('nightAtMinutes', cfg.nightAtMinutes, 0, 1439)
   requireRange('nightWindowMinutes', cfg.nightWindowMinutes, Number.MIN_VALUE, Number.MAX_SAFE_INTEGER)
-  requireRange('nightDurationMinutes', cfg.nightDurationMinutes, 0, Number.MAX_SAFE_INTEGER)
   requireRange('scheduleGraceMinutes', cfg.scheduleGraceMinutes, 0, Number.MAX_SAFE_INTEGER)
 
   const auto = cfg.autoWake

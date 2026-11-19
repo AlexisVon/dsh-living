@@ -31,7 +31,7 @@
 - 删除 `napAtMinutes / napWindowMinutes / napSkipBelowEvents / napDurationMinutes / napDay`。
 - `lastNapAt` → `lastConsolidationAt`；旧 life.db 在加载时迁移。
 - 13:00 不再触发睡眠，也不再是标题边界（标题改为按日序号）。
-- `living_sleep` 工具已移除：睡眠只由 03:30 调度触发，模型不能手动 sleep。
+- `living_sleep` 工具已移除：睡眠由 `nightAt`（默认 03:30）触发，模型不能手动 sleep；没有固定睡眠时长，记录实际整理耗时。
 - 人格模式 `off/night`；旧 `all` 按 `night` 处理。
 
 ## 5. 夜睡保留

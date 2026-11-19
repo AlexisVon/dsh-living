@@ -43,3 +43,12 @@ test('timeline：外发 pending/review 也进时间轴', async (t) => {
   assert.equal(outbound.category, 'outbound')
   assert.equal(outbound.detail.id, id)
 })
+
+test('timeline：睡眠事件进入 sleep 类别并带时长', async (t) => {
+  const store = open(t)
+  await store.appendEvent({ id: 'sl1', ts: NOW, kind: 'sleep', source: 'living', payload: { trigger: 'night', durationMs: 17 * 60000, ok: true } })
+  const items = buildTimeline({ store, limit: 10 })
+  const row = items.find((item) => item.id === 'event:sl1')
+  assert.equal(row.category, 'sleep')
+  assert.match(row.title, /17 分钟/)
+})

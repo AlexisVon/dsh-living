@@ -735,6 +735,8 @@ export function createRuntime({
       label: failed ? '失败' : '完成',
       detail: failed ? (error.message ?? String(error)) : '完成',
       error: failed ? (error.message ?? String(error)) : null,
+      finishedAt: at,
+      durationMs: Math.max(0, at - sleepProgress.startedAt),
       updatedAt: at,
       steps: sleepProgress.steps.map((step) => ({
         ...step,
@@ -902,13 +904,31 @@ export function createRuntime({
   async function consolidate(kind, nowMs = now(), options = {}) {
     if (kind !== 'night') return consolidateInner(kind, nowMs, options)
     beginSleepProgress()
+    let error = null
     try {
       const result = await consolidateInner(kind, nowMs, options)
       finishSleepProgress(null)
       return result
-    } catch (error) {
-      finishSleepProgress(error)
-      throw error
+    } catch (caught) {
+      error = caught
+      finishSleepProgress(caught)
+      throw caught
+    } finally {
+      const last = {
+        kind,
+        trigger: options.trigger ?? 'night',
+        startedAt: sleepProgress?.startedAt ?? null,
+        finishedAt: sleepProgress?.finishedAt ?? null,
+        durationMs: sleepProgress?.durationMs ?? 0,
+        ok: error == null,
+        error: error?.message ?? null,
+      }
+      try {
+        await store.setState('sleep.last', last)
+        await store.appendEvent({ kind: 'sleep', ts: now(), source: 'living', payload: last })
+      } catch (recordError) {
+        logger.warn?.(`living: 睡眠记录失败: ${recordError.message}`)
+      }
     }
   }
 
@@ -1140,17 +1160,16 @@ export function createRuntime({
     if (kind !== 'night') throw new RangeError(`未知睡眠类型: ${kind}`)
     const nowMs = now()
     const day = clock.dayKey(nowMs, tz)
-    const duration = clockCfg.nightDurationMinutes ?? clock.CLOCK_DEFAULTS.nightDurationMinutes
     status = RUNTIME_STATUS.SLEEPING
     clockState = {
       ...clockState,
-      sleepingUntil: nowMs + duration * 60000,
+      sleepingUntil: 0,
       sleepKind: kind,
       lastWakeAt: nowMs,
       lastWakeKind: kind,
       nightDay: day,
     }
-    const result = await consolidate(kind, nowMs, { unlimited })
+    const result = await consolidate(kind, nowMs, { unlimited, trigger: 'manual' })
     clockState = clock.endSleep(clockState, now())
     status = RUNTIME_STATUS.RUNNING
     await persist()
@@ -2295,6 +2314,7 @@ export function createRuntime({
       status,
       lastConsolidation: consolidation ? { ts: consolidation.ts, ...consolidation.payload } : null,
       sleepLastError: store.getState('sleep.lastError') ?? null,
+      lastSleep: store.getState('sleep.last') ?? null,
       sleepProgress,
       nextWakeAt: clockState.nextWakeAt,
       sleepingUntil: clockState.sleepingUntil,

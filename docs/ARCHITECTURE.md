@@ -133,7 +133,7 @@ clock.tick()                      ← 30/60s，纯代码，0 模型成本
                   └─ 写 anchors，更新 state.next_wake；轮末按可见性归档
 ```
 
-会话生命周期：**同一个活 agent 跨轮复用，直到 rest 或夜睡**；两者都在 `consolidate` 时轮换（`dispose` 旧 agent、归档旧会话、清空 state）。rest 由上下文保险触发，夜睡由 03:30 调度触发。宿主重启后按 `state['session.current']` 恢复同一条对话。超时/中断只 `cancel` 当前 turn，不拆 agent。
+会话生命周期：**同一个活 agent 跨轮复用，直到 rest 或夜睡**；两者都在 `consolidate` 时轮换（`dispose` 旧 agent、归档旧会话、清空 state）。rest 由上下文保险触发，夜睡由 `nightAt`（默认 03:30）触发。宿主重启后按 `state['session.current']` 恢复同一条对话。超时/中断只 `cancel` 当前 turn，不拆 agent。
 
 主会话标题在创建时固定为 `living-YYYY-MM-DD-N`（N 为当天新建会话序号，本地午夜重置；恢复会话不占号；宿主 `sessionTitle.rename`，pinned，自动标题不会覆盖）。轮换后的新会话取下一个序号。
 
@@ -269,7 +269,7 @@ n = gridMinutes × 60 / sampleSeconds
 
 |  | rest | 夜睡 |
 |---|---|---|
-| 触发 | 上下文保险（默认 1M 的 70%） | `period: 1d`，`at: 03:30`，不可跳过 |
+| 触发 | 上下文保险（默认 1M 的 70%） | `period: 1d`，`at: nightAt`（默认 03:30），不可跳过 |
 | events → episodes | ✅ | ✅ |
 | 降级到冷区 | ❌ | ✅ |
 | 重写 self | ❌ | ✅（默认；DB 版本化） |

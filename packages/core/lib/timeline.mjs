@@ -10,6 +10,7 @@ const EVENT_CATEGORIES = {
   auto_hit: 'grid',
   agent_mark: 'agent',
   consolidation: 'sleep',
+  sleep: 'sleep',
   context_guard: 'system',
   memory_extracted: 'memory',
   memory_extract_failed: 'memory',
@@ -46,6 +47,10 @@ function eventTitle(event) {
   }
   if (event.kind === 'agent_mark') return `自写节点${payload.tag ? ` · ${payload.tag}` : ''}`
   if (event.kind === 'consolidation') return `整理 · ${payload.kind ?? '?'}`
+  if (event.kind === 'sleep') {
+    const minutes = Math.max(0, Math.round((Number(payload.durationMs) || 0) / 60000))
+    return `睡眠 · ${payload.trigger === 'manual' ? '手动' : '夜睡'} · ${minutes} 分钟${payload.ok === false ? ' · 失败' : ''}`
+  }
   if (event.kind === 'memory_extracted') return `记忆整理 · ${payload.items ?? 0} 条 / ${payload.edges ?? 0} 边${payload.fallback ? ' · fallback' : ''}`
   if (event.kind === 'session_handoff') return '会话交接'
   if (event.kind === 'context_guard') return '上下文保险'

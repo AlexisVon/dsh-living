@@ -114,17 +114,40 @@ window.__ModuleLoader__.load({
       return text.length > 26 ? `${text.slice(0, 12)}…${text.slice(-8)}` : text || '—'
     }
 
+    function pad2(value) {
+      return String(value).padStart(2, '0')
+    }
+
     function relativeTime(ts) {
       if (!Number.isFinite(ts) || ts <= 0) return '—'
       const delta = Date.now() - ts
       if (delta < 60_000) return '刚刚'
       if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`
       if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`
-      return new Date(ts).toLocaleString()
+      return clockTime(ts)
     }
 
     function clockTime(ts) {
-      return Number.isFinite(ts) && ts > 0 ? new Date(ts).toLocaleString() : '—'
+      if (!Number.isFinite(ts) || ts <= 0) return '—'
+      const date = new Date(ts)
+      return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+    }
+
+    function clockTimeShort(ts) {
+      if (!Number.isFinite(ts) || ts <= 0) return '—'
+      const date = new Date(ts)
+      return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+    }
+
+    function clockDayTime(ts) {
+      if (!Number.isFinite(ts) || ts <= 0) return '—'
+      const date = new Date(ts)
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+      const diff = Math.round((target - start) / 86_400_000)
+      const label = diff === 0 ? '今天' : diff === 1 ? '明天' : diff === -1 ? '昨天' : `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+      return `${label} ${clockTimeShort(ts)}`
     }
 
     const STATUS_LABELS = {
@@ -377,6 +400,7 @@ window.__ModuleLoader__.load({
       const [sleepDialog, setSleepDialog] = React.useState(false)
       const [sleepBusy, setSleepBusy] = React.useState(false)
       const [sleepUnlimited, setSleepUnlimited] = React.useState(false)
+      const [showAllSchedule, setShowAllSchedule] = React.useState(false)
       const state = useRpc('state', { nonce })
       const gemsRpc = useRpc('gems', { nonce })
       const s = state.value
@@ -433,14 +457,16 @@ window.__ModuleLoader__.load({
       if (state.error) return h('div', { className: 'living-empty' }, `状态读取失败：${state.error}`)
       if (!s) return h('div', { className: 'living-empty' }, '加载中…')
       const sleepProgress = s.sleepProgress
-      const sleepElapsed = sleepProgress?.startedAt
+      const sleepElapsed = sleepProgress?.running
         ? Math.max(0, Math.round((Date.now() - sleepProgress.startedAt) / 1000))
-        : 0
+        : Math.max(0, Math.round((sleepProgress?.durationMs ?? 0) / 1000))
       const stepTone = (stepState) => stepState === 'done' ? 'ok' : stepState === 'active' ? 'warn' : stepState === 'failed' ? 'error' : 'muted'
       const stepLabel = (stepState) => stepState === 'done' ? '完成' : stepState === 'active' ? '进行中' : stepState === 'failed' ? '失败' : '等待'
+      const sleepingNow = s.status === 'SLEEPING' || sleepProgress?.running === true
+      const scheduleRows = showAllSchedule ? upcoming : upcoming.slice(0, 3)
 
       return h('div', { className: 'living-grid' },
-        h('section', { className: 'living-card' },
+        h('section', { className: 'living-card living-span-4' },
           h('div', { className: 'living-card-head' }, h('span', null, '生命状态'), statusBadge(s.status)),
           line('连续失败', s.failures ?? 0),
           line('抑制', s.suppression ? `${s.suppression.reason} · ${relativeTime(s.suppression.since)}` : '—'),
@@ -449,7 +475,7 @@ window.__ModuleLoader__.load({
           s.sleepLastError ? h('div', { className: 'living-field-error' }, `上次睡眠失败：${s.sleepLastError.error}（${clockTime(s.sleepLastError.ts)}）`) : null,
           s.lastError ? h('div', { className: 'living-field-error' }, `最近错误：${s.lastError}`) : null),
 
-        h('section', { className: 'living-card' },
+        h('section', { className: 'living-card living-span-4' },
           h('div', { className: 'living-card-head' },
             h('span', null, '主会话'),
             h(Switch, {
@@ -458,16 +484,22 @@ window.__ModuleLoader__.load({
               onChange: toggleSession,
             })),
           line('标题', session?.title ?? '—'),
-          line('会话', session?.id ? shortId(session.id) : '未启动', true),
+          line('会话', session?.id ? shortId(session.id) : sleepingNow ? '睡眠中，唤醒后新建' : '未启动', true),
           line('开始', session?.startedAt ? clockTime(session.startedAt) : '—'),
           h('div', { className: 'living-row' },
-            Badge({ tone: session?.live ? 'ok' : 'muted', children: session?.live ? '已挂载' : '未挂载' }),
+            Badge({ tone: session?.live ? 'ok' : sleepingNow ? 'warn' : 'muted', children: session?.live ? '已挂载' : sleepingNow ? '睡眠中' : '未挂载' }),
             session?.busy ? Badge({ tone: 'warn', children: '轮次进行中' }) : null,
             session?.rotating ? Badge({ tone: 'warn', children: '待轮换' }) : null,
             Badge({ tone: session?.visible ? 'ok' : 'muted', children: session?.visible ? '侧栏可见' : '侧栏隐藏' })),
+          (s.tools ?? []).length === 0
+            ? line('工具面', '尚未上报')
+            : h('details', { className: 'living-details' },
+                h('summary', null, `工具面 ${s.tools.length} 个可用工具`),
+                h('div', { className: 'living-chips' },
+                  ...(s.tools ?? []).map((name) => h('span', { key: name, className: 'living-chip living-mono' }, name)))),
           h('div', { className: 'living-field-help' }, '开关即时生效，不换会话；可见时可直接打开这条会话（绕过预算与审计）。')),
 
-        h('section', { className: 'living-card' },
+        h('section', { className: 'living-card living-span-4' },
           h('div', { className: 'living-card-head' }, h('span', null, '今日预算')),
           Progress({ used: budget.tokensUsed ?? 0, limit: limits.dailyTokens ?? 0, label: 'Token' }),
           Progress({ used: budget.rounds ?? 0, limit: limits.dailyRounds ?? 0, label: '轮次' }),
@@ -475,14 +507,21 @@ window.__ModuleLoader__.load({
             h(Button, { variant: 'outline', size: 'sm', icon: h(IconRefreshOutlineRegular, { size: 14 }), onClick: () => setConfirmReset(true) }, '重置今日用量')),
           h('div', { className: 'living-field-help' }, '只清今日计数，不删历史；写一条 budget_reset 审计事件。')),
 
-        h('section', { className: 'living-card' },
+        h('section', { className: 'living-card living-span-8' },
           h('div', { className: 'living-card-head' }, h('span', null, '下一次醒来')),
-          line('硬唤醒', clockTime(s.nextWakeAt)),
-          line('睡眠至', s.sleepingUntil ? clockTime(s.sleepingUntil) : '—'),
+          line('硬唤醒', clockDayTime(s.nextWakeAt)),
+          line('上次睡眠', s.lastSleep?.finishedAt
+            ? `${s.lastSleep.trigger === 'manual' ? '手动' : '夜睡'} ${clockTimeShort(s.lastSleep.startedAt)}–${clockTimeShort(s.lastSleep.finishedAt)}（${Math.max(1, Math.round((s.lastSleep.durationMs ?? 0) / 60000))} 分钟）`
+            : '—'),
           line('日程', upcoming.length > 0 ? `${upcoming.length} 项待办` : '无'),
-          ...upcoming.slice(0, 4).map((item) => h('div', { key: item.id, className: 'living-row' },
-            h('span', { className: 'living-mono' }, new Date(item.at).toLocaleTimeString()),
-            h('span', null, item.intent || item.id))),
+          ...scheduleRows.map((item) => h('div', { key: item.id, className: 'living-row living-row-schedule' },
+            h('span', { className: 'living-mono' }, clockDayTime(item.at)),
+            h('span', { className: 'living-intent', title: item.intent || item.id }, item.intent || item.id))),
+          upcoming.length > 3
+            ? h('div', { className: 'living-controls' },
+                h(Button, { variant: 'ghost', size: 'sm', onClick: () => setShowAllSchedule((value) => !value) },
+                  showAllSchedule ? '收起日程' : `展开其余 ${upcoming.length - 3} 项`))
+            : null,
           h('div', { className: 'living-controls' },
             h(Button, {
               variant: 'outline',
@@ -495,7 +534,7 @@ window.__ModuleLoader__.load({
               : null),
           h('div', { className: 'living-field-help' }, '立即采集当前会话、处理全部 pending raw，补齐向量索引，最后演化人格；可能几分钟，token 计入预算。')),
 
-        h('section', { className: 'living-card' },
+        h('section', { className: 'living-card living-span-4' },
           h('div', { className: 'living-card-head' },
             h('span', null, '宝石'),
             h(Button, { variant: 'outline', size: 'sm', onClick: onOpenGems }, '打开宝石页')),
@@ -508,15 +547,6 @@ window.__ModuleLoader__.load({
                 gemHealth.get(gem.id)?.lastError
                   ? h('span', { className: 'living-field-error' }, String(gemHealth.get(gem.id).lastError).slice(0, 40))
                   : null))),
-
-        h('section', { className: 'living-card' },
-          h('div', { className: 'living-card-head' }, h('span', null, '工具面')),
-          (s.tools ?? []).length === 0
-            ? h('div', { className: 'living-muted' }, '尚未上报')
-            : h('details', { className: 'living-details' },
-                h('summary', null, `${(s.tools ?? []).length} 个可用工具`),
-                h('div', { className: 'living-chips' },
-                  ...(s.tools ?? []).map((name) => h('span', { key: name, className: 'living-chip living-mono' }, name))))),
 
         h(Modal, {
           open: confirmReset,
@@ -955,13 +985,25 @@ window.__ModuleLoader__.load({
       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
     }
 
-    function AutoTimeline({ estimate }) {
+    function minuteOfDay(text, fallback = 210) {
+      const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(text ?? '').trim())
+      return match ? Number(match[1]) * 60 + Number(match[2]) : fallback
+    }
+
+    function AutoTimeline({ estimate, night = {}, lastSleep = null }) {
       const width = 1000
       const x = (minutes) => (minutes / 1440) * width
       const now = new Date()
       const nowMinutes = now.getHours() * 60 + now.getMinutes()
+      const nightAt = minuteOfDay(night.at, 210)
+      const windowMinutes = Math.max(0, Number(night.windowMinutes) || 0)
+      const nightEnd = nightAt + windowMinutes
+      const spans = nightEnd <= 1440
+        ? [[nightAt, nightEnd]]
+        : [[nightAt, 1440], [0, nightEnd - 1440]]
+      const lastMinutes = Number(lastSleep?.durationMs) > 0 ? Math.max(1, Math.round(lastSleep.durationMs / 60000)) : null
       return h('div', { className: 'living-field' },
-        h('svg', { viewBox: `0 0 ${width} 78`, style: { width: '100%', height: 78, display: 'block' }, role: 'img', 'aria-label': '自动唤醒时段' },
+        h('svg', { viewBox: `0 0 ${width} 78`, style: { width: '100%', height: 78, display: 'block' }, role: 'img', 'aria-label': '自动唤醒与夜睡时段' },
           h('rect', { x: 0, y: 10, width, height: 40, fill: 'rgba(127,127,127,0.08)' }),
           ...estimate.segments.map((segment, index) =>
             h('rect', {
@@ -973,6 +1015,26 @@ window.__ModuleLoader__.load({
               fill: AUTO_CLASS_COLORS[segment.className],
               opacity: 0.85,
             })),
+          ...spans.map(([start, end], index) =>
+            h('rect', {
+              key: `night-${index}`,
+              x: x(start),
+              y: 10,
+              width: Math.max(0.5, x(end) - x(start)),
+              height: 40,
+              fill: 'rgba(108,142,191,0.10)',
+              stroke: '#6c8ebf',
+              strokeWidth: 1.2,
+              strokeDasharray: '4 3',
+            })),
+          h('line', { x1: x(nightAt), x2: x(nightAt), y1: 6, y2: 58, stroke: '#6c8ebf', strokeWidth: 2 }),
+          h('text', {
+            x: x(nightAt),
+            y: 6,
+            textAnchor: nightAt < 120 ? 'start' : nightAt > 1320 ? 'end' : 'middle',
+            fontSize: 10,
+            fill: '#6c8ebf',
+          }, `夜睡 ${night.at ?? '03:30'}`),
           ...[0, 6, 12, 18, 24].map((hour) =>
             h('g', { key: `tick-${hour}` },
               h('line', { x1: x(hour * 60), x2: x(hour * 60), y1: 6, y2: 58, stroke: 'rgba(127,127,127,0.45)', strokeWidth: 1 }),
@@ -982,10 +1044,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'living-row' },
           ...['high', 'low', 'normal'].map((key) =>
             h('span', { key, className: 'living-chip', style: { borderLeft: `3px solid ${AUTO_CLASS_COLORS[key]}` } },
-              `${AUTO_CLASS_LABELS[key]} · ${estimate.counts[key]} 格 · 期望 ${estimate.expected[key]}`))))
+              `${AUTO_CLASS_LABELS[key]} · ${estimate.counts[key]} 格 · 期望 ${estimate.expected[key]}`)),
+          h('span', { className: 'living-chip', style: { borderLeft: '3px solid #6c8ebf' } },
+            `夜睡 ${night.at ?? '03:30'} · 窗口 ${windowMinutes} 分钟`),
+          lastMinutes ? h('span', { className: 'living-muted' }, `上次睡眠 ${lastMinutes} 分钟`) : null))
     }
 
-    function AutoWakeCard({ values, save, setError }) {
+    function AutoWakeCard({ values, save, setError, state }) {
       let estimate = null
       let estimateError = null
       try {
@@ -1003,12 +1068,30 @@ window.__ModuleLoader__.load({
         setError(null)
         save(name, value)
       }
+      const commitNightAt = (value) => {
+        const text = String(value ?? '').trim()
+        if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(text)) {
+          setError('夜睡: 时间格式 HH:MM')
+          return
+        }
+        setError(null)
+        save('nightAt', text)
+      }
+      const commitWindow = (value) => {
+        const minutes = Number(value)
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+          setError('夜睡: 补睡窗口必须是正数（分钟）')
+          return
+        }
+        setError(null)
+        save('nightWindowMinutes', minutes)
+      }
       const numberField = (name, label, help) => h(Field, { key: name, label, help },
         h(CommitInput, { kind: 'number', value: values[name] ?? '', commit: (value) => commit(name, value) }))
       const rangeField = (name, label, help, fallback) => h(Field, { key: name, label, help },
         h(CommitInput, { value: values[name] ?? fallback, placeholder: '06:00-08:00;12:00-14:00;18:00-24:00', commit: (value) => commit(name, value) }))
       return h('section', { className: 'living-card' },
-        h('div', { className: 'living-card-head' }, h('span', null, '自动唤醒')),
+        h('div', { className: 'living-card-head' }, h('span', null, '作息与自动唤醒')),
         h('div', { className: 'living-fields-grid' },
           h(Field, { label: '网格大小', help: '必须整除 24h；50 分钟不可用' },
             h(SegmentedTabs, {
@@ -1028,7 +1111,11 @@ window.__ModuleLoader__.load({
           numberField('autoWakeLowExpected', '低热期望', '每个低热网格的期望触发次数'),
           numberField('autoWakeHighExpected', '高热期望', '每个高热网格的期望触发次数'),
           rangeField('autoWakeHotRanges', '高热时段', '本地时间，分号分隔：06:00-08:00;12:00-14:00;18:00-24:00', '06:00-08:00;12:00-14:00;18:00-24:00'),
-          rangeField('autoWakeColdRanges', '低热时段', '沾到网格即整格生效；高热优先于低热', '00:00-06:00')),
+          rangeField('autoWakeColdRanges', '低热时段', '沾到网格即整格生效；高热优先于低热', '00:00-06:00'),
+          h(Field, { label: '夜睡触发', help: '本地时间 HH:MM；每天一次，触发后开始夜间整理' },
+            h(CommitInput, { value: values.nightAt ?? '03:30', placeholder: '03:30', commit: commitNightAt })),
+          h(Field, { label: '补睡窗口', help: '触发点后多少分钟内仍可补睡；超时跳过当晚，不影响整理时长' },
+            h(CommitInput, { kind: 'number', value: values.nightWindowMinutes ?? 360, commit: commitWindow }))),
         h('div', { className: 'living-field-help' },
           `固定 σ 轮盘：${AUTO_SIGMA_RATIOS.map((ratio) => `1/${Math.round(1 / ratio)}`).join(' / ')}；每个网格 ${Math.round(AUTO_NORMAL_SHARE * 100)}% 保持正态、${Math.round((1 - AUTO_NORMAL_SHARE) * 100)}% 打乱顺序。`),
         estimateError
@@ -1041,7 +1128,11 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'living-muted' }, `网格 ${estimate.grids} 个`)),
                 h('div', { className: 'living-field-help' },
                   `σ 单格上限：${estimate.caps.map((cap) => `1/${Math.round(1 / cap.ratio)} → ${cap.lambdaMax.toFixed(2)}`).join(' · ')}`),
-                h(AutoTimeline, { estimate }))
+                h(AutoTimeline, {
+                  estimate,
+                  night: { at: values.nightAt, windowMinutes: values.nightWindowMinutes },
+                  lastSleep: state?.lastSleep,
+                }))
             : null)
     }
 
@@ -1062,6 +1153,70 @@ window.__ModuleLoader__.load({
             }))),
         h('div', { className: 'living-field-help' },
           `当前 ${current.toLocaleString()} tokens${selected ? `（1M 的 ${selected}%）` : '（自定义值）'}。handoff 只注入一次，不写入 L1/facets。`))
+    }
+
+    function MemoryPolicyCard({ values, save, setError }) {
+      const stored = String(values.memoryParamsJson ?? '{}')
+      const [draft, setDraft] = React.useState(stored)
+      const [notice, setNotice] = React.useState(null)
+      const pretty = (text) => {
+        try {
+          return JSON.stringify(JSON.parse(text || '{}'), null, 2)
+        } catch {
+          return text ?? '{}'
+        }
+      }
+      React.useEffect(() => setDraft(pretty(stored)), [stored])
+      const format = () => {
+        try {
+          setDraft(JSON.stringify(JSON.parse(draft || '{}'), null, 2))
+          setError(null)
+        } catch (error) {
+          setError(`记忆策略: ${error.message}`)
+        }
+      }
+      const commit = () => {
+        let parsed
+        try {
+          parsed = JSON.parse(draft.trim() || '{}')
+        } catch (error) {
+          setError(`记忆策略: ${error.message}`)
+          return
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          setError('记忆策略: 必须是 JSON 对象')
+          return
+        }
+        setError(null)
+        setNotice('已写入 profile；宿主热更新后生效，未生效则重载宿主')
+        save('memoryParamsJson', draft.trim() || '{}')
+      }
+      const reset = () => {
+        setDraft('{}')
+        setNotice(null)
+        setError(null)
+        save('memoryParamsJson', '{}')
+      }
+      return h('section', { className: 'living-card' },
+        h('div', { className: 'living-card-head' },
+          h('span', null, '记忆策略'),
+          h(Badge, { tone: 'muted', children: '高级' })),
+        h(Field, { label: 'memoryParamsJson', help: 'JSON 对象；覆盖召回/衰减/整理的 24 个参数，未知键忽略、越界钳制；默认 {} 等于当前行为' },
+          h('textarea', {
+            className: 'living-textarea',
+            rows: 8,
+            spellCheck: false,
+            style: { fontFamily: 'ui-monospace, monospace' },
+            value: draft,
+            onChange: (event) => setDraft(event.target.value),
+          })),
+        h('div', { className: 'living-controls' },
+          h(Button, { variant: 'primary', size: 'sm', onClick: commit }, '保存'),
+          h(Button, { variant: 'outline', size: 'sm', onClick: format }, '格式化'),
+          h(Button, { variant: 'ghost', size: 'sm', onClick: reset }, '恢复默认')),
+        h('div', { className: 'living-field-help' },
+          '键表与默认值见 docs/DEPLOY.md §2.1；范围外数值会钳制，坏 JSON 保存会被拒绝。'),
+        notice ? h('div', { className: 'living-field-help' }, notice) : null)
     }
 
     const CONFIG_GROUPS = [
@@ -1348,8 +1503,9 @@ window.__ModuleLoader__.load({
         ...CONFIG_GROUPS.map((group) => h('section', { key: group.title, className: 'living-card' },
           h('div', { className: 'living-card-head' }, h('span', null, group.title)),
           h('div', { className: 'living-fields-grid' }, ...group.fields.map(renderField)))),
-        h(AutoWakeCard, { values, save, setError }),
+        h(AutoWakeCard, { values, save, setError, state: stateRpc.value }),
         h(ContextGuardCard, { values, save }),
+        h(MemoryPolicyCard, { values, save, setError }),
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' }, h('span', null, '宝石目录')),
           renderGemDirs(),
@@ -2864,7 +3020,12 @@ function installStyles() {
 .living-title{font-size:18px;font-weight:600;line-height:1.3;margin:0}
 .living-sub{color:var(--dsw-alias-label-tertiary,#888);font-size:12px;margin-top:2px}
 .living-body{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 24px;display:flex;flex-direction:column;gap:14px}
-.living-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:start}
+.living-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:start}
+.living-span-4{grid-column:span 4}
+.living-span-8{grid-column:span 8}
+.living-row-schedule{flex-wrap:nowrap}
+.living-intent{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:1200px){.living-grid{grid-template-columns:minmax(0,1fr)}.living-span-4,.living-span-8{grid-column:span 1}}
 .living-card{border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:10px;padding:14px 16px;background:color-mix(in srgb,currentColor 3%,transparent);display:flex;flex-direction:column;gap:8px;min-width:0}
 .living-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:600}
 .living-subpage{display:flex;flex-direction:column;gap:10px;min-width:0}

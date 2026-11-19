@@ -28,7 +28,7 @@ import { createRecollector } from './lib/recollector.mjs'
 import { RECOLLECT_DEFAULTS, RECOLLECT_PRESET_PLUGINS } from './lib/recollect.mjs'
 import { allocateLivingSessionTitle } from './lib/session-title.mjs'
 import { LIMITER_PRESET_PLUGINS } from './lib/limiter.mjs'
-import { autoWakeEstimate, scaledNow } from './lib/clock.mjs'
+import { autoWakeEstimate, parseTimeOfDay, scaledNow } from './lib/clock.mjs'
 import { ADMIN_CHANNEL, ADMIN_ENDPOINT, createAdminFetch } from './lib/rpc.mjs'
 
 export const name = 'living'
@@ -43,6 +43,9 @@ export const Config = z.object({
   gemStoreDir: z.string().default(''),
   timeScale: z.number().default(1).extra('volatile', true),
   tickMs: z.number().default(60000).extra('volatile', true),
+  /** Local HH:MM; the night sleep trigger. */
+  nightAt: z.string().default('03:30').extra('volatile', true),
+  nightWindowMinutes: z.number().default(360).extra('volatile', true),
   l0Tokens: z.number().default(3000).extra('volatile', true),
   /** JSON object overriding MEMORY_DEFAULTS; unknown keys ignored, ranges clamped. */
   memoryParamsJson: z.string().default('{}').extra('volatile', true),
@@ -76,6 +79,9 @@ export async function apply(ctx, config) {
   const cfg = normalizeConfig(config)
   if (typeof cfg.home !== 'string' || cfg.home === '') throw new Error('living: `home` 必填')
   const memoryParams = parseMemoryParams(cfg.memoryParamsJson)
+  const nightAtMinutes = parseTimeOfDay(cfg.nightAt)
+  const nightWindowMinutes = Number(cfg.nightWindowMinutes)
+  if (!Number.isFinite(nightWindowMinutes) || nightWindowMinutes <= 0) throw new RangeError('living: nightWindowMinutes 必须为正数')
 
   const layout = ensureLayout({ home: cfg.home, logger: console })
   applyPendingImport({ layout, logger: console })
@@ -229,7 +235,7 @@ export async function apply(ctx, config) {
       roundTimeoutMs: cfg.roundTimeoutMs,
       recollectTimeoutMs: cfg.recollectTimeoutMs,
       gemSilenceMinutes: cfg.gemSilenceMinutes,
-      clock: { autoWake },
+      clock: { autoWake, nightAtMinutes, nightWindowMinutes },
       startupRound: cfg.startupRound,
       budget: { dailyTokens: cfg.dailyTokens, dailyRounds: cfg.dailyRounds, roundTokens: cfg.roundTokens },
       gemTokens,
@@ -409,6 +415,8 @@ function normalizeConfig(config) {
     gemStoreDir: value(config.gemStoreDir, ''),
     tickMs: value(config.tickMs, 60000),
     timeScale: value(config.timeScale, 1),
+    nightAt: value(config.nightAt, '03:30'),
+    nightWindowMinutes: value(config.nightWindowMinutes, 360),
     l0Tokens: value(config.l0Tokens, 3000),
     memoryParamsJson: value(config.memoryParamsJson, '{}'),
     dailyTokens: value(config.dailyTokens, 2000000),

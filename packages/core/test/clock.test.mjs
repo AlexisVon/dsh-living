@@ -14,6 +14,7 @@ import {
   dayKey,
   endSleep,
   nextDeadline,
+  parseTimeOfDay,
   recoveryDue,
   scaledNow,
   tick,
@@ -196,7 +197,8 @@ test('夜睡不可跳过，每天一次', () => {
   const now = local(2026, 11, 17, 3, 35)
   const { state, decision } = tick(createClockState(now), now, {}, auto(), () => 0.999999)
   assert.equal(decision.action, 'night')
-  assert.equal(state.sleepingUntil, now + 90 * MIN)
+  assert.equal(state.sleepKind, 'night')
+  assert.equal(state.sleepingUntil, 0)
 
   const after = endSleep(state, now + 60 * MIN)
   const again = tick(after, now + 61 * MIN, {}, auto(), () => 0.999999)
@@ -285,4 +287,13 @@ test('默认参数与自动唤醒预设一致', () => {
   assert.equal(CLOCK_DEFAULTS.autoWake.sampleSeconds, 30)
   assert.equal(CLOCK_DEFAULTS.autoWake.normalExpected, 0.1)
   assert.equal(CLOCK_DEFAULTS.nightAtMinutes, 3 * 60 + 30)
+})
+
+test('parseTimeOfDay：HH:MM 解析与大声失败', () => {
+  assert.equal(parseTimeOfDay('03:30'), 210)
+  assert.equal(parseTimeOfDay('00:00'), 0)
+  assert.equal(parseTimeOfDay('23:59'), 1439)
+  assert.throws(() => parseTimeOfDay('24:00'), RangeError)
+  assert.throws(() => parseTimeOfDay('3:30'), RangeError)
+  assert.throws(() => parseTimeOfDay('abc'), RangeError)
 })
