@@ -3,6 +3,7 @@
 import { estimateTokens, overlapScore, tokenizeCue } from './text.mjs'
 import { classifyLayer, decayedStrength } from './layers.mjs'
 import { recall } from './recall.mjs'
+import { MEMORY_DEFAULTS } from './memory-config.mjs'
 
 export const L0_DEFAULT_TOKENS = 3000
 export const COLD_CLUE_MAX = 8
@@ -141,7 +142,7 @@ export function selectL0({
   cue = {},
   cold = [],
   budgetTokens = L0_DEFAULT_TOKENS,
-  topK = 15,
+  topK = null,
   channels = [],
   mood = {},
   now = Date.now(),
@@ -149,17 +150,19 @@ export function selectL0({
   includeImports = false,
   edgesFor = null,
   tzOffsetMinutes = null,
+  params = MEMORY_DEFAULTS,
 }) {
   const eligible = includeImports ? items : items.filter((item) => item.source !== 'import')
-  const result = recall({ items: eligible, cue, mood, channels, topK, now, rng })
-  expandGraph(result, eligible, edgesFor, { limit: topK, now, enabled: channels.length === 0 || channels.includes('G1') })
-  const coldest = coldestCueHit(eligible, result.recalled, cue, now)
-  const l0 = buildL0({ recalled: result.recalled, partialHits: result.partialHits, cold, coldest, budgetTokens, now, tzOffsetMinutes })
+  const limit = topK ?? params.l0TopK
+  const result = recall({ items: eligible, cue, mood, channels, topK: limit, now, rng, params })
+  expandGraph(result, eligible, edgesFor, { limit, now, enabled: channels.length === 0 || channels.includes('G1'), params })
+  const coldest = coldestCueHit(eligible, result.recalled, cue, now, params)
+  const l0 = buildL0({ recalled: result.recalled, partialHits: result.partialHits, cold, coldest, budgetTokens, now, tzOffsetMinutes, params })
   return { ...l0, recall: result }
 }
 
 /** G1: one-hop graph expansion from the recall seeds. Edges are derived data. */
-export function expandGraph(result, items, edgesFor, { limit = 8, maxSeeds = 5, now = Date.now(), enabled = true } = {}) {
+export function expandGraph(result, items, edgesFor, { limit = 8, maxSeeds = 5, now = Date.now(), enabled = true, params = MEMORY_DEFAULTS } = {}) {
   if (!enabled || !result || typeof edgesFor !== 'function' || !result.recalled?.length) return result
   const byKey = new Map(items.map((item) => [`${item.kind}:${item.id}`, item]))
   const seen = new Set(result.recalled.map((item) => `${item.kind}:${item.id}`))
@@ -179,7 +182,7 @@ export function expandGraph(result, items, edgesFor, { limit = 8, maxSeeds = 5, 
         layer: item.layer,
         text: item.text,
         score,
-        strength: item.strength ?? decayedStrength(item, now),
+        strength: item.strength ?? decayedStrength(item, now, params),
         why: [`G1:${edge.relation}`],
         drivesAction: item.drivesAction !== false,
       })
@@ -199,8 +202,9 @@ export function buildL0({
   budgetTokens = L0_DEFAULT_TOKENS,
   now = Date.now(),
   tzOffsetMinutes = null,
+  params = MEMORY_DEFAULTS,
 }) {
-  const coldLines = cold.slice(0, COLD_CLUE_MAX).map((row) => formatCold(row, tzOffsetMinutes))
+  const coldLines = cold.slice(0, params.coldClueMax).map((row) => formatCold(row, tzOffsetMinutes))
   const coldCost = coldLines.reduce((sum, line) => sum + estimateTokens(`${line}\n`), 0)
   const coldestLine = coldest ? formatEntry(coldest, tzOffsetMinutes) : null
   const reserve = coldestLine ? estimateTokens(`${coldestLine}\n`) : 0
@@ -260,7 +264,7 @@ export function formatCold(row, tzOffsetMinutes = null) {
   return `- 你隐约记得（${date}）：${label} —— 细节已不可考`
 }
 
-export function coldestCueHit(items, recalled, cue, now) {
+export function coldestCueHit(items, recalled, cue, now, params = MEMORY_DEFAULTS) {
   const recalledIds = new Set(recalled.map((entry) => entry.id))
   const tokens = tokenizeCue([cue.text ?? '', ...(cue.entities ?? [])].join(' '))
   if (!tokens.length) return null
@@ -270,7 +274,7 @@ export function coldestCueHit(items, recalled, cue, now) {
     if (recalledIds.has(item.id)) continue
     const haystack = [item.text, item.source, item.target].filter(Boolean).join(' ')
     if (overlapScore(tokens, haystack) <= 0.08) continue
-    const strength = item.strength ?? decayedStrength(item, now)
+    const strength = item.strength ?? decayedStrength(item, now, params)
     if (strength < coldestStrength) {
       coldest = item
       coldestStrength = strength

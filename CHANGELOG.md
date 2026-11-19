@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.10 — 2026-11-19
+
+- 召回：meta 不再降到最低档，改为只降一档（相关度 −0.05）；“旧结论不再成立”这类只剩 meta 副本的更正回到前排，9 个真实 cue 的 gold@8/MRR 不变。
+- 记忆策略参数开放：Config `memoryParamsJson`（volatile）覆盖 24 个召回/衰减/抽取参数，越界钳制、未知键忽略、坏 JSON 大声失败；默认值与 0.3.9 行为一致，改参数不需要发版。
+- 测试：core 348。
+
 ## 0.3.9 — 2026-11-19
 
 - 召回排序重做：单 token 线索按字段/位置分级（title/subject/target 1.0、正文前 40 字 0.75、正文其余 0.45），多 token 用 idf 加权；相关度按 0.05 分带，sal/rec/strength/journal 只进带内有界 tie-break。

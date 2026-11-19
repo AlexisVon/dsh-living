@@ -60,3 +60,22 @@ test('memory-extract：未知关系回退 related_to', () => {
 test('memory-extract：非 JSON 大声失败', () => {
   assert.throws(() => parseMemoryExtraction('不是 JSON', { segments }), /不是 JSON/)
 })
+
+test('memory-extract：maxItems/maxEdges 可覆盖', () => {
+  const prompt = buildMemoryPrompt({ segments, maxItems: 5, maxEdges: 6 })
+  assert.match(prompt, /items 最多 5 条/)
+  const payload = {
+    items: [
+      { kind: 'episode', title: 'a', description: 'a', raw: 'raw_s1', ts_start: 100 },
+      { kind: 'episode', title: 'b', description: 'b', raw: 'raw_s1', ts_start: 200 },
+      { kind: 'episode', title: 'c', description: 'c', raw: 'raw_s1', ts_start: 300 },
+    ],
+    edges: [
+      { from: 0, to: 1, relation: 'causes', confidence: 0.8 },
+      { from: 0, to: 2, relation: 'causes', confidence: 0.8 },
+    ],
+  }
+  const result = parseMemoryExtraction(JSON.stringify(payload), { segments, maxItems: 2, maxEdges: 1 })
+  assert.equal(result.items.length, 2)
+  assert.equal(result.edges.length, 1)
+})

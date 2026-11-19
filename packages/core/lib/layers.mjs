@@ -1,15 +1,17 @@
 /** Memory layers, lazy decay and the demotion threshold (ARCHITECTURE §7). */
 
-const DAY_MS = 86400000
-const STRENGTH_CAP = 0.95
+import { MEMORY_DEFAULTS } from './memory-config.mjs'
 
-export const DEMOTE_STRENGTH = 0.15
+const DAY_MS = 86400000
+const PERMANENT_HALF_LIFE_DAYS = 3650
+
+export const DEMOTE_STRENGTH = MEMORY_DEFAULTS.demoteStrength
 
 export const LAYERS = Object.freeze({
-  L2: { id: 'L2', name: '情节记忆', halfLifeDays: 21 },
-  L3: { id: 'L3', name: '语义记忆', halfLifeDays: 180 },
-  L4: { id: 'L4', name: '程序记忆', halfLifeDays: 3650 },
-  L5: { id: 'L5', name: '自传式记忆', halfLifeDays: 0, permanent: true },
+  L2: { id: 'L2', name: '情节记忆' },
+  L3: { id: 'L3', name: '语义记忆' },
+  L4: { id: 'L4', name: '程序记忆' },
+  L5: { id: 'L5', name: '自传式记忆', permanent: true },
 })
 
 const PROCEDURAL_HINTS = [
@@ -36,37 +38,41 @@ export function classifyLayer(item) {
   return 'L3'
 }
 
-export function halfLifeDays(item) {
-  if (String(item?.kind) === 'topic') return 7
+export function halfLifeDays(item, params = MEMORY_DEFAULTS) {
+  if (String(item?.kind) === 'topic') return params.halfLifeTopic
   if (Number.isFinite(item?.halfLifeDays) && item.halfLifeDays > 0) return item.halfLifeDays
   const layer = LAYERS[classifyLayer(item)]
-  return layer?.permanent ? 3650 : (layer?.halfLifeDays ?? 21)
+  if (layer?.permanent) return PERMANENT_HALF_LIFE_DAYS
+  if (layer?.id === 'L2') return params.halfLifeL2
+  if (layer?.id === 'L3') return params.halfLifeL3
+  if (layer?.id === 'L4') return params.halfLifeL4
+  return params.halfLifeL2
 }
 
 export function isPermanent(item) {
   return item?.permanent === true || LAYERS[item?.layer]?.permanent === true
 }
 
-export function decayedStrength(entry, now) {
-  const strength0 = clamp(Number(entry?.strength0 ?? 0.85), 0, STRENGTH_CAP)
+export function decayedStrength(entry, now, params = MEMORY_DEFAULTS) {
+  const strength0 = clamp(Number(entry?.strength0 ?? params.strength0), 0, params.strengthCap)
   if (isPermanent(entry)) return strength0
   const days = Math.max(0, (now - (entry.lastTs ?? entry.ts ?? now)) / DAY_MS)
-  const base = halfLifeDays(entry)
+  const base = halfLifeDays(entry, params)
   const slowed = base * (1 + 0.5 * Math.log(1 + Math.max(0, Number(entry.rehearsal) || 0)))
-  return clamp(strength0 * Math.exp(-days / slowed), 0, STRENGTH_CAP)
+  return clamp(strength0 * Math.exp(-days / slowed), 0, params.strengthCap)
 }
 
-export function recencyScore(item, now) {
+export function recencyScore(item, now, params = MEMORY_DEFAULTS) {
   const days = Math.max(0, (now - (item.lastTs ?? item.ts ?? now)) / DAY_MS)
-  return Math.exp(-days / halfLifeDays(item))
+  return Math.exp(-days / halfLifeDays(item, params))
 }
 
 export function rehearsalScore(rehearsal) {
   return Math.min(1, Math.log(1 + Math.max(0, Number(rehearsal) || 0)) / Math.log(11))
 }
 
-export function isDemotionCandidate(entry, now, threshold = DEMOTE_STRENGTH) {
-  return !isPermanent(entry) && decayedStrength(entry, now) < threshold
+export function isDemotionCandidate(entry, now, threshold = MEMORY_DEFAULTS.demoteStrength, params = MEMORY_DEFAULTS) {
+  return !isPermanent(entry) && decayedStrength(entry, now, params) < threshold
 }
 
 export function layerName(id) {

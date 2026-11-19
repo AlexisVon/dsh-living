@@ -23,6 +23,7 @@ import { findScope } from './lib/host-scope.mjs'
 import { createAdjudicator } from './lib/adjudicator.mjs'
 import { createPersonaEvolver, SELF_PRESET_PLUGINS } from './lib/persona-evolve.mjs'
 import { createMemoryExtractor, MEMORY_PRESET_PLUGINS } from './lib/memory-extract.mjs'
+import { parseMemoryParams } from './lib/memory-config.mjs'
 import { createRecollector } from './lib/recollector.mjs'
 import { RECOLLECT_DEFAULTS, RECOLLECT_PRESET_PLUGINS } from './lib/recollect.mjs'
 import { allocateLivingSessionTitle } from './lib/session-title.mjs'
@@ -43,6 +44,8 @@ export const Config = z.object({
   timeScale: z.number().default(1).extra('volatile', true),
   tickMs: z.number().default(60000).extra('volatile', true),
   l0Tokens: z.number().default(3000).extra('volatile', true),
+  /** JSON object overriding MEMORY_DEFAULTS; unknown keys ignored, ranges clamped. */
+  memoryParamsJson: z.string().default('{}').extra('volatile', true),
   dailyTokens: z.number().default(2000000).extra('volatile', true),
   dailyRounds: z.number().default(96).extra('volatile', true),
   roundTokens: z.number().min(500000).max(800000).default(700000).extra('volatile', true),
@@ -72,6 +75,7 @@ export const Config = z.object({
 export async function apply(ctx, config) {
   const cfg = normalizeConfig(config)
   if (typeof cfg.home !== 'string' || cfg.home === '') throw new Error('living: `home` 必填')
+  const memoryParams = parseMemoryParams(cfg.memoryParamsJson)
 
   const layout = ensureLayout({ home: cfg.home, logger: console })
   applyPendingImport({ layout, logger: console })
@@ -172,6 +176,7 @@ export async function apply(ctx, config) {
     workspace,
     presetId: memoryPresetId,
     logger: console,
+    memoryParams,
     archive: (sessionId) => archiveSession(ctx, sessionId),
     setup: async (agentCtx) => {
       await ctx.agentPresets.mount(agentCtx, memoryPresetId)
@@ -219,6 +224,7 @@ export async function apply(ctx, config) {
     personaAvailable: () => selfPresetReady,
     config: {
       l0Tokens: cfg.l0Tokens,
+      memoryParams,
       personaMaxChars: cfg.personaMaxChars,
       roundTimeoutMs: cfg.roundTimeoutMs,
       recollectTimeoutMs: cfg.recollectTimeoutMs,
@@ -404,6 +410,7 @@ function normalizeConfig(config) {
     tickMs: value(config.tickMs, 60000),
     timeScale: value(config.timeScale, 1),
     l0Tokens: value(config.l0Tokens, 3000),
+    memoryParamsJson: value(config.memoryParamsJson, '{}'),
     dailyTokens: value(config.dailyTokens, 2000000),
     dailyRounds: value(config.dailyRounds, 96),
     roundTokens: value(config.roundTokens, 700000),

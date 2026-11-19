@@ -11,6 +11,7 @@
         timeScale: 1
         tickMs: 60000
         l0Tokens: 3000
+        memoryParamsJson: '{}'
         dailyTokens: 2000000
         roundTokens: 150000
         selfWakeLimit: 12

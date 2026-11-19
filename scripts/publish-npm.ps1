@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Pack (and optionally publish) dsh-living 0.3.9.
+  Pack (and optionally publish) dsh-living 0.3.10.
 
 .DESCRIPTION
   Run this on the machine where npm 2FA is available.
 
   Default: build the tarball in %TEMP%\dsh-living-release and print its path.
-  Upload it yourself: dsh-living-0.3.9.tgz.
+  Upload it yourself: dsh-living-0.3.10.tgz.
 
   -Publish: publish the tarball with npm publish; the 2FA prompt appears here.
   -Staged:  add --staged to npm publish (only if your npm CLI supports staged publishing).
@@ -68,7 +68,7 @@ function Invoke-Pack([string]$packageDir, [string]$name) {
 
 Invoke-Pack 'packages/core' 'dsh-living'
 
-$core = Join-Path $out 'dsh-living-0.3.9.tgz'
+$core = Join-Path $out 'dsh-living-0.3.10.tgz'
 if (-not (Test-Path $core)) {
   throw "Expected tarball not found in $out"
 }
@@ -93,7 +93,7 @@ $publishArgs = @('publish', '--access', 'public')
 if ($Staged) { $publishArgs += '--staged' }
 
 Write-Host ''
-Write-Host 'Publishing dsh-living 0.3.9...'
+Write-Host 'Publishing dsh-living 0.3.10...'
 & npm @publishArgs $core
 if ($LASTEXITCODE -ne 0) { throw 'dsh-living publish failed' }
 

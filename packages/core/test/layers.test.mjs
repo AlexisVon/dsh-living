@@ -12,6 +12,7 @@ import {
   isProcedural,
   rehearsalScore,
 } from '../lib/layers.mjs'
+import { resolveMemoryParams } from '../lib/memory-config.mjs'
 
 const DAY = 86400000
 const NOW = Date.UTC(2026, 10, 17, 12)
@@ -69,4 +70,11 @@ test('近因分数随时间下降，复述分数封顶 1', () => {
   assert.equal(rehearsalScore(0), 0)
   assert.equal(rehearsalScore(10), 1)
   assert.ok(rehearsalScore(3) > rehearsalScore(1))
+})
+
+test('参数：半衰期可调', () => {
+  const old = { kind: 'event', lastTs: NOW - 21 * 86400000, ts: NOW - 21 * 86400000 }
+  const base = decayedStrength(old, NOW)
+  const fast = decayedStrength(old, NOW, resolveMemoryParams({ halfLifeL2: 7 }))
+  assert.ok(fast < base)
 })

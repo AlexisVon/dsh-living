@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Publish the prebuilt dsh-living 0.3.9 tarball from a folder.
+  Publish the prebuilt dsh-living 0.3.10 tarball from a folder.
 
 .DESCRIPTION
   The tarball is already packed; workspace:* is replaced with dsh-living-protocol@0.2.0.
   This script never packs. It verifies the file and optionally publishes it.
 
-  Without -Publish it only prints the path; upload it yourself: dsh-living-0.3.9.tgz.
+  Without -Publish it only prints the path; upload it yourself: dsh-living-0.3.10.tgz.
 
   With -Publish it runs npm publish; the 2FA prompt appears on this machine.
   -Staged adds --staged if your npm CLI supports staged publishing.
@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $PackageDir) { $PackageDir = $PSScriptRoot }
 
-$core = Join-Path $PackageDir 'dsh-living-0.3.9.tgz'
+$core = Join-Path $PackageDir 'dsh-living-0.3.10.tgz'
 if (-not (Test-Path $core)) { throw "Missing: $core" }
 
 Write-Host 'Tarball:'
@@ -34,7 +34,7 @@ Write-Host "  $core"
 
 if (-not $Publish) {
   Write-Host ''
-  Write-Host 'Upload: dsh-living-0.3.9.tgz.'
+  Write-Host 'Upload: dsh-living-0.3.10.tgz.'
   Write-Host 'To publish from this machine: rerun with -Publish (add -Staged if supported).'
   exit 0
 }
@@ -50,7 +50,7 @@ if ($LASTEXITCODE -ne 0) {
 $publishArgs = @('publish', '--access', 'public')
 if ($Staged) { $publishArgs += '--staged' }
 
-Write-Host 'Publishing dsh-living 0.3.9...'
+Write-Host 'Publishing dsh-living 0.3.10...'
 & npm @publishArgs $core
 if ($LASTEXITCODE -ne 0) { throw 'dsh-living publish failed' }
 

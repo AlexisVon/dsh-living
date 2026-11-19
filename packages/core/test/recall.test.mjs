@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { recall, RECALL_CHANNELS } from '../lib/recall.mjs'
+import { resolveMemoryParams } from '../lib/memory-config.mjs'
 
 const MIN = 60000
 const NOW = Date.UTC(2026, 10, 17, 12)
@@ -160,12 +161,15 @@ test('显著度只能在相关度档内插队', () => {
   assert.deepEqual(r.recalled.map((entry) => entry.id), ['precise', 'vague'])
 })
 
-test('meta 条目降到最低档但保留', () => {
+test('meta 只在同等相关度时让位', () => {
   const meta = item({ id: 'meta', kind: 'episode', title: '记忆整合自检：米糕', text: '记忆整合自检：米糕', importance: 0.95, meta: true })
-  const real = item({ id: 'real', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕`, importance: 0.2 })
-  const r = recall({ items: [meta, real], cue: { text: '米糕' }, now: NOW })
-  assert.equal(r.recalled[0].id, 'real')
-  assert.ok(r.recalled.some((entry) => entry.id === 'meta'))
+  const same = item({ id: 'same', kind: 'episode', title: '米糕', text: '米糕：重点色银渐层', importance: 0.2 })
+  const r1 = recall({ items: [meta, same], cue: { text: '米糕' }, now: NOW })
+  assert.deepEqual(r1.recalled.map((entry) => entry.id), ['same', 'meta'])
+
+  const lower = item({ id: 'lower', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕`, importance: 0.2 })
+  const r2 = recall({ items: [meta, lower], cue: { text: '米糕' }, now: NOW })
+  assert.equal(r2.recalled[0].id, 'meta')
 })
 
 test('多 token：稀有 token 权重更高', () => {
@@ -180,4 +184,41 @@ test('journal 相关度更高时不被 0.65 折价埋没', () => {
   const fact = item({ id: 'f', kind: 'fact', text: `${'今天聊了很多别的事，'.repeat(4)}最后顺带提到米糕` })
   const r = recall({ items: [fact, journal], cue: { text: '米糕' }, now: NOW })
   assert.equal(r.recalled[0].id, 'j')
+})
+
+test('参数：metaPenaltyBands 可关闭', () => {
+  const meta = item({ id: 'meta', kind: 'episode', title: '记忆整合自检：米糕', text: '记忆整合自检：米糕', importance: 0.95, meta: true })
+  const same = item({ id: 'same', kind: 'episode', title: '米糕', text: '米糕：重点色银渐层', importance: 0.2 })
+  const strict = recall({ items: [meta, same], cue: { text: '米糕' }, now: NOW, params: resolveMemoryParams({ metaPenaltyBands: 1 }) })
+  assert.equal(strict.recalled[0].id, 'same')
+  const off = recall({ items: [meta, same], cue: { text: '米糕' }, now: NOW, params: resolveMemoryParams({ metaPenaltyBands: 0 }) })
+  assert.equal(off.recalled[0].id, 'meta')
+})
+
+test('参数：leadChars 控制首句档', () => {
+  const early = item({ id: 'early', text: `${'今天聊了很多别的事，'.repeat(3)}米糕`, importance: 0.2 })
+  const late = item({ id: 'late', text: `${'今天聊了很多别的事，'.repeat(8)}米糕`, importance: 0.9 })
+  const wide = recall({ items: [early, late], cue: { text: '米糕' }, now: NOW, params: resolveMemoryParams({ leadChars: 40 }) })
+  assert.equal(wide.recalled[0].id, 'early', '首句命中应压过正文命中')
+  const narrow = recall({ items: [early, late], cue: { text: '米糕' }, now: NOW, params: resolveMemoryParams({ leadChars: 20 }) })
+  assert.equal(narrow.recalled[0].id, 'late', '首句收窄后由显著度在档内决定')
+})
+
+test('参数：journalFactor 只作用在 tie 部分', () => {
+  const fact = item({ id: 'fact', kind: 'fact', text: '米糕是重点色银渐层', confidence: 0.8 })
+  const journal = item({ id: 'journal', kind: 'journal', text: '米糕是重点色银渐层', source: 'journal', confidence: 1, recallChannels: ['R1'] })
+  const penalized = recall({ items: [fact, journal], cue: { text: '米糕' }, now: NOW })
+  const even = recall({ items: [fact, journal], cue: { text: '米糕' }, now: NOW, params: resolveMemoryParams({ journalFactor: 1 }) })
+  const p = penalized.recalled.find((entry) => entry.id === 'journal')
+  const e = even.recalled.find((entry) => entry.id === 'journal')
+  assert.ok(p && e)
+  assert.ok(e.score > p.score, '关掉折价后 journal 的同档分应更高')
+})
+
+test('参数：spontaneousProb 可关闭', () => {
+  const big = item({ id: 'big', text: '第一次见面', importance: 0.9 })
+  const off = recall({ items: [big], cue: {}, channels: ['R7'], now: NOW, rng: () => 0.1, params: resolveMemoryParams({ spontaneousProb: 0 }) })
+  assert.equal(off.recalled.length, 0)
+  const on = recall({ items: [big], cue: {}, channels: ['R7'], now: NOW, rng: () => 0.1, params: resolveMemoryParams({ spontaneousProb: 1 }) })
+  assert.equal(on.recalled[0]?.id, 'big')
 })

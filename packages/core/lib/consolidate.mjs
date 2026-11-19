@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto'
 import { tokenizeCue } from './text.mjs'
 import { isDemotionCandidate } from './layers.mjs'
+import { MEMORY_DEFAULTS } from './memory-config.mjs'
 import { formatCold } from './memory.mjs'
 
 const STOP = new Set([
@@ -40,10 +41,10 @@ export function clusterEpisodes(events, { maxGapMinutes = 120 } = {}) {
   })
 }
 
-export function selectDemotions(entries, { now = Date.now(), threshold = 0.15, maxKeywords = 3 } = {}) {
+export function selectDemotions(entries, { now = Date.now(), threshold = MEMORY_DEFAULTS.demoteStrength, maxKeywords = 3, params = MEMORY_DEFAULTS } = {}) {
   const rows = []
   for (const entry of entries) {
-    if (!isDemotionCandidate(entry, now, threshold)) continue
+    if (!isDemotionCandidate(entry, now, threshold, params)) continue
     const text = String(entry.text ?? '')
     const keywords = pickKeywords(text, maxKeywords)
     const refs = (entry.eventRefs ?? []).slice(0, 3)

@@ -11,6 +11,7 @@ import * as budget from './budget.mjs'
 import { createChannel } from './channel.mjs'
 import { collectMemoryItems, expandGraph, selectL0, MEMORY_EVENT_KINDS } from './memory.mjs'
 import { recall } from './recall.mjs'
+import { MEMORY_DEFAULTS } from './memory-config.mjs'
 import { clusterEpisodes, selectDemotions } from './consolidate.mjs'
 import { appendJournal, assemblePersona, clearSelf, readPersona, writeCharter, writeSelf } from './persona.mjs'
 import { buildRoundPrompt, executeRound, HANDOFF_PROMPT, mapFailureCode, situationLine, triggerInstruction, TRUST_BOUNDARY, ROUND_DEFAULTS } from './round.mjs'
@@ -113,6 +114,7 @@ export function createRuntime({
 
   const clockCfg = { ...(config.clock ?? {}), tzOffsetMinutes: config.tzOffsetMinutes ?? config.clock?.tzOffsetMinutes ?? null }
   const budgetCfg = { ...(config.budget ?? {}), tzOffsetMinutes: config.tzOffsetMinutes ?? config.budget?.tzOffsetMinutes ?? null }
+  const memoryParams = config.memoryParams ?? MEMORY_DEFAULTS
   const contextGuardTokens = Number.isFinite(Number(budgetCfg.roundTokens))
     ? Number(budgetCfg.roundTokens)
     : budget.BUDGET_DEFAULTS.roundTokens
@@ -551,6 +553,7 @@ export function createRuntime({
       rng,
       edgesFor: memoryEdgesFor,
       tzOffsetMinutes: tz,
+      params: memoryParams,
     })
     const handoff = await takeHandoff(nowMs)
     const available = availableGems(nowMs)
@@ -749,8 +752,10 @@ export function createRuntime({
     const batches = []
     const journals = pending.filter((segment) => segment.kind === 'journal')
     const others = pending.filter((segment) => segment.kind !== 'journal')
-    for (let index = 0; index < journals.length; index += 6) batches.push(journals.slice(index, index + 6))
-    for (let index = 0; index < others.length; index += 3) batches.push(others.slice(index, index + 3))
+    const journalBatch = memoryParams.batchJournal
+    const otherBatch = memoryParams.batchOther
+    for (let index = 0; index < journals.length; index += journalBatch) batches.push(journals.slice(index, index + journalBatch))
+    for (let index = 0; index < others.length; index += otherBatch) batches.push(others.slice(index, index + otherBatch))
 
     let itemCount = 0
     let edgeCount = 0
@@ -981,7 +986,7 @@ export function createRuntime({
     let demotions = 0
     if (kind === 'night') {
       const items = collectMemoryItems(store, { now: nowMs })
-      for (const row of selectDemotions(items, { now: nowMs })) {
+      for (const row of selectDemotions(items, { now: nowMs, threshold: memoryParams.demoteStrength, params: memoryParams })) {
         await store.appendCold(row)
         demotions += 1
       }
@@ -1457,6 +1462,7 @@ export function createRuntime({
       rng,
       edgesFor: memoryEdgesFor,
       tzOffsetMinutes: tz,
+      params: memoryParams,
     }).text
     const localDate = (ts) => (Number.isFinite(ts)
       ? new Date(ts + tz * 60000).toISOString().slice(0, 10)
@@ -2433,11 +2439,11 @@ export function createRuntime({
         freshEvents()
           .filter((event) => !Number.isFinite(since) || event.ts >= since)
           .slice(0, Math.max(1, Math.min(200, Number(limit) || 50))),
-      recall: (query, { topK = 8 } = {}) => {
+      recall: (query, { topK = memoryParams.recallTopK } = {}) => {
         const items = collectMemoryItems(store, { now: now() })
         const at = now()
-        const result = recall({ items, cue: { text: String(query ?? '') }, topK, now: at, rng })
-        return expandGraph(result, items, memoryEdgesFor, { limit: topK, now: at })
+        const result = recall({ items, cue: { text: String(query ?? '') }, topK, now: at, rng, params: memoryParams })
+        return expandGraph(result, items, memoryEdgesFor, { limit: topK, now: at, params: memoryParams })
       },
       mark: async (text, tag = null) => {
         const value = String(text ?? '').trim()

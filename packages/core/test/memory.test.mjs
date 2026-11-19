@@ -8,6 +8,7 @@ import { createStore } from '../lib/store.mjs'
 import { buildL0, expandGraph, selectL0, collectMemoryItems, formatCold, formatEntry, isMetaMemory } from '../lib/memory.mjs'
 import { recall } from '../lib/recall.mjs'
 import { estimateTokens } from '../lib/text.mjs'
+import { resolveMemoryParams } from '../lib/memory-config.mjs'
 
 const NOW = Date.UTC(2026, 10, 17, 12)
 const MIN = 60000
@@ -242,4 +243,10 @@ test('collectMemoryItems：meta 由标题/主语判定，不误伤正文提及',
   assert.equal(items.find((item) => item.id === 'meta_ep').meta, true)
   assert.equal(items.find((item) => item.id === 'real_ep').meta, false)
   assert.equal(items.find((item) => item.id === 'real_fact').title, '猫 米糕')
+})
+
+test('参数：l0TopK 可调', () => {
+  const items = Array.from({ length: 20 }, (_, index) => entry({ id: `m${index}`, text: `第 ${index} 次聊散热` }))
+  const l0 = selectL0({ items, cue: { text: '散热' }, now: NOW, params: resolveMemoryParams({ l0TopK: 5 }) })
+  assert.equal(l0.recall.recalled.length, 5)
 })

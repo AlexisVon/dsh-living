@@ -1,6 +1,6 @@
 # 部署与验收手册
 
-2026-11-19 · 适用 `dsh-living` v0.3.9 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
+2026-11-19 · 适用 `dsh-living` v0.3.10 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
 
 ## 1. 开发环境（隔离 DSH_HOME）
 
@@ -30,6 +30,7 @@ $.home missing required value (at home)
     timeScale: 1
     tickMs: 60000
     l0Tokens: 3000
+    memoryParamsJson: '{}'        # 记忆策略覆盖，见 2.1；volatile，改后即时生效
     dailyTokens: 2000000
     roundTokens: 700000          # 上下文保险 = 1M 的 70%（可选 500k–800k）
     autoWakeGridMinutes: 10
@@ -47,6 +48,26 @@ $.home missing required value (at home)
     whitelistJson: '[]'
     sessionRoot: !!js dshHomePath('sessions')
 ```
+
+### 2.1 记忆策略参数（`memoryParamsJson`）
+
+`memoryParamsJson` 是 volatile 字段：走 `settings.update()` 即时生效、重启后保留，不需要发 npm 版本。内容是一个 JSON 对象，只覆盖写出的键；未知键忽略，越界值钳到安全范围，JSON 非法则插件启动大声失败。默认值在 `lib/memory-config.mjs`，与 0.3.9 行为一致。
+
+| 键 | 默认 | 范围 | 作用 |
+|---|---|---|---|
+| `metaPenaltyBands` | 1 | 0–2 | meta 条目在相关度上降几档 |
+| `journalFactor` | 0.65 | 0.3–1 | journal 的 tie 折价 |
+| `leadChars` | 40 | 20–80 | 首句/前 40 字的高权重窗口 |
+| `tierLead` / `tierBody` | 0.75 / 0.45 | `body ≤ lead ≤ 1` | 首句 / 正文命中权重（强字段固定 1） |
+| `relBand` | 0.05 | 0.02–0.1 | 相关度分带宽度；tie 上限自动派生 |
+| `salienceGate` / `arousalGate` | 0.6 / 0.5 | 0.3–0.9 / 0.2–0.9 | R4 显著度门槛 |
+| `chainBonus` | 0.12 | 0–0.2 | R6 时间链加分 |
+| `spontaneousProb` | 0.5 | 0–1 | R7 闪回概率 |
+| `recallTopK` / `l0TopK` / `coldClueMax` | 8 / 15 / 8 | 3–20 / 5–30 / 0–20 | 召回条数、L0 条数、冷区线索上限 |
+| `halfLifeL2` / `halfLifeL3` / `halfLifeL4` / `halfLifeTopic` | 21 / 180 / 3650 / 7 | 1–10000 天 | 各层半衰期 |
+| `strength0` / `strengthCap` / `demoteStrength` | 0.85 / 0.95 / 0.15 | `demote ≤ strength0 ≤ cap` | 初始强度、上限、降级线 |
+| `maxItems` / `maxEdges` | 20 / 40 | 5–50 / 5–100 | 单次整理条目/边上限 |
+| `batchJournal` / `batchOther` | 6 / 3 | 1–20 | 夜睡整理批大小 |
 
 ## 3. 模型路由必须配好
 
