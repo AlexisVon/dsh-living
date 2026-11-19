@@ -199,6 +199,10 @@ test('宝石管理：列表、配置保存、登录控制、token 写 only', asy
       return { gem: id, status: 'wait', qr: { url: 'u', svg: '<svg/>' } }
     },
     status: (id) => ({ gem: id, status: 'idle' }),
+    input: (id, promptId, value) => {
+      calls.push(['input', id, promptId, value])
+      return { gem: id, status: 'wait', prompts: [] }
+    },
     cancel: (id) => ({ gem: id, status: 'cancelled' }),
   }
   const tokens = new Map()
@@ -241,9 +245,14 @@ test('宝石管理：列表、配置保存、登录控制、token 写 only', asy
 
   assert.equal((await handle('gemLoginStart', { gem: 'demo' })).value.status, 'wait')
   assert.equal((await handle('gemLoginStatus', { gem: 'demo' })).value.status, 'idle')
+  const loginInput = await handle('gemLoginInput', { gem: 'demo', promptId: 'username', value: 'alice' })
+  assert.equal(loginInput.ok, true)
+  assert.deepEqual(loginInput.value.prompts, [])
+  assert.equal((await handle('gemLoginInput', { gem: 'demo', promptId: '', value: 'x' })).error.code, 'invalid_prompt')
+  assert.equal((await handle('gemLoginInput', { gem: 'demo', promptId: 'username', value: 1 })).error.code, 'invalid_value')
   assert.equal((await handle('gemLoginCancel', { gem: 'demo' })).value.status, 'cancelled')
   assert.equal((await handle('gemConfig', { gem: 'nope', config: {} })).ok, false)
-  assert.deepEqual(calls, [['start', 'demo']])
+  assert.deepEqual(calls, [['start', 'demo'], ['input', 'demo', 'username', 'alice']])
 })
 
 test('reports / report / 未知端点', async (t) => {

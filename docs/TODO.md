@@ -1,11 +1,18 @@
 # TODO
 
+## 0.3.0（2026-11-19）
+
+- [x] 登录输入通道、宝石页二级子页、小佩喂食器宝石与看图
+- [x] npm 发布 gem-petkit 0.1.0 / dsh-living 0.3.0
+- [x] live 宝石库从 npm 安装 petkit 0.1.0（gemDirs 已移除）
+- [x] 公开镜像 main + `v0.3.0` / `dsh-gem-petkit-v0.1.0`
+
 ## 0.2.0（2026-11-19）
 
 - [x] 召回卫生、journal 记忆源、夜间去重、版本与文档同步
-- [ ] npm 发布 0.2.0（需 2FA；顺序 protocol → gem-bili / gem-wechat / gem-example → dsh-living）
-- [ ] live 宝石库从 npm 0.2.0 重装（当前是 0.1.0 副本 + 手工补丁）
-- [ ] 公开镜像 main + `v0.2.0`
+- [x] npm 发布 0.2.0（protocol / gem-bili / gem-wechat / gem-example / dsh-living）
+- [x] live 宝石库从 npm 0.2.0 重装（bili/wechat 0.2.0）
+- [x] 公开镜像 main + `v0.2.0`
 
 ## 0.1.0
 

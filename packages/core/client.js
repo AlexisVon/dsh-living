@@ -1458,6 +1458,7 @@ window.__ModuleLoader__.load({
       const [rawDraft, setRawDraft] = React.useState(() => gem.configText ?? '{}\n')
       const [login, setLogin] = React.useState(null)
       const [loginError, setLoginError] = React.useState(null)
+      const [promptValues, setPromptValues] = React.useState({})
       const [skill, setSkill] = React.useState(null)
       const [skillOpen, setSkillOpen] = React.useState(false)
       const running = login && !['idle', 'done', 'error', 'cancelled'].includes(login.status)
@@ -1549,10 +1550,23 @@ window.__ModuleLoader__.load({
 
       const startLogin = () => {
         setLoginError(null)
+        setPromptValues({})
         call('gemLoginStart', { gem: gem.id }).then(setLogin).catch((error) => setLoginError(error.message))
       }
       const cancelLogin = () => {
+        setPromptValues({})
         call('gemLoginCancel', { gem: gem.id }).then(setLogin).catch((error) => setLoginError(error.message))
+      }
+      const submitPrompt = (promptId) => {
+        const value = promptValues[promptId] ?? ''
+        if (value === '') return
+        setLoginError(null)
+        call('gemLoginInput', { gem: gem.id, promptId, value })
+          .then((state) => {
+            setLogin(state)
+            setPromptValues((current) => ({ ...current, [promptId]: '' }))
+          })
+          .catch((error) => setLoginError(error.message))
       }
       const openSkill = () => {
         setSkillOpen(true)
@@ -1563,6 +1577,9 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const loginStatusLabel = login?.status === 'wait'
+        ? (login?.qr ? '等待扫码' : login?.prompts?.length ? '等待输入' : '等待操作')
+        : (LOGIN_LABELS[login?.status] ?? '未开始')
       const credential = gem.credential ?? {}
       const account = credential.account ?? {}
       const accountLabel = account.uname
@@ -1606,14 +1623,38 @@ window.__ModuleLoader__.load({
                 size: 'sm',
                 icon: h(IconPlayOutlineRegular, { size: 14 }),
                 onClick: startLogin,
-              }, running ? '刷新二维码' : '扫码登录')
+              }, running ? '重新登录' : '登录')
             : h('span', { className: 'living-muted' }, '该宝石没有登录通道'),
           running ? h(Button, { variant: 'outline', size: 'sm', onClick: cancelLogin }, '取消') : null,
-          h('span', { className: 'living-muted' }, LOGIN_LABELS[login?.status] ?? '未开始')),
+          h('span', { className: 'living-muted' }, loginStatusLabel)),
         credential.error ? h('div', { className: 'living-field-error' }, credential.error) : null,
         loginError ? h('div', { className: 'living-field-error' }, loginError) : null,
         login?.qr?.svg
           ? h('div', { className: 'living-qr', dangerouslySetInnerHTML: { __html: login.qr.svg } })
+          : null,
+        login?.prompts?.length
+          ? h('div', { className: 'living-field' },
+              ...login.prompts.map((prompt) => h(Field, { key: prompt.id, label: prompt.label, help: prompt.help },
+                h('div', { className: 'living-row' },
+                  h(Input, {
+                    type: prompt.kind === 'password' ? 'password' : 'text',
+                    value: promptValues[prompt.id] ?? '',
+                    placeholder: prompt.placeholder || '',
+                    autoComplete: 'off',
+                    onChange: (event) => setPromptValues((current) => ({ ...current, [prompt.id]: event.target.value })),
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        submitPrompt(prompt.id)
+                      }
+                    },
+                  }),
+                  h(Button, {
+                    variant: 'outline',
+                    size: 'sm',
+                    disabled: (promptValues[prompt.id] ?? '') === '',
+                    onClick: () => submitPrompt(prompt.id),
+                  }, '提交')))))
           : null,
         login?.status === 'done' && login.account
           ? h('div', { className: 'living-field-help' }, `登录成功：${login.account.name || login.account.accountId || ''} ${login.account.id || login.account.userId || ''}`)
@@ -1688,11 +1729,10 @@ window.__ModuleLoader__.load({
           : null)
     }
 
-    function GemStorePanel({ onChanged }) {
+    function GemStore({ onClose, onChanged }) {
       const notify = React.useContext(ToastContext)
       const [nonce, setNonce] = React.useState(0)
       const { value, error } = useRpc('gemCatalog', { nonce }, 15_000)
-      const [open, setOpen] = React.useState(false)
       const [busy, setBusy] = React.useState(null)
       const [actionError, setActionError] = React.useState(null)
       const [confirm, setConfirm] = React.useState(null)
@@ -1709,7 +1749,7 @@ window.__ModuleLoader__.load({
             ? await call('gemInstall', { id: entry.id })
             : await call('gemUninstall', { id: entry.id })
           setConfirm(null)
-          setOpen(false)
+          onClose?.()
           notify(result.restartRequired === false ? `${entry.name} 已${kind === 'install' ? '安装' : '卸载'}` : `${entry.name} 已${kind === 'install' ? '安装' : '卸载'}，重启宿主后生效`)
           refresh()
         } catch (err) {
@@ -1719,15 +1759,13 @@ window.__ModuleLoader__.load({
         }
       }
 
-      return h('section', { className: 'living-card' },
-        h('div', { className: 'living-card-head' },
-          h('span', null, '宝石库'),
-          h(Button, {
-            variant: 'outline',
-            size: 'sm',
-            icon: h(IconPlusOutlineRegular, { size: 14 }),
-            onClick: () => { setOpen(true); setActionError(null); setConfirm(null) },
-          }, '添加宝石')),
+      return h(Modal, {
+        open: true,
+        title: '添加宝石',
+        closeLabel: '关闭',
+        onClose: () => { setConfirm(null); onClose?.() },
+        footer: h(Button, { variant: 'outline', onClick: onClose }, '关闭'),
+      }, h('div', { className: 'living-field' },
         h('div', { className: 'living-field-help' },
           '从 npm 下载到 living 自己的宝石目录；不会变成 DSH 插件。安装或卸载后重启宿主生效；卸载只删代码与 media 缓存，保留配置、凭据和记忆。'),
         value?.length
@@ -1735,79 +1773,94 @@ window.__ModuleLoader__.load({
               ...value.map((entry) => h('span', { key: entry.id, className: 'living-chip' },
                 `${entry.name}${entry.installed ? ` v${entry.installedVersion ?? ''}` : ' · 未安装'}`)))
           : null,
-        open
-          ? h(Modal, {
-              open: true,
-              title: '添加宝石',
-              closeLabel: '关闭',
-              onClose: () => { setOpen(false); setConfirm(null) },
-              footer: h(Button, { variant: 'outline', onClick: () => setOpen(false) }, '关闭'),
-            }, h('div', { className: 'living-field' },
-              error ? h('div', { className: 'living-field-error' }, `读取失败：${error}`) : null,
-              ...(value ?? []).map((entry) => h('div', { key: entry.id, className: 'living-card' },
-                h('div', { className: 'living-gem-head' },
-                  h('span', { className: 'living-gem-name' }, `${entry.name}（${entry.id}）`),
-                  h('span', { className: 'living-muted' }, `${entry.package}@${entry.version}`),
-                  Badge({
-                    tone: entry.installed ? 'ok' : 'muted',
-                    children: entry.installed ? `已安装 ${entry.installedVersion ?? ''}` : '未安装',
-                  })),
-                entry.description ? h('div', { className: 'living-muted' }, entry.description) : null,
-                h('div', { className: 'living-chips' },
-                  ...Object.entries(entry.capabilities ?? {}).filter(([, enabled]) => enabled).map(([key]) =>
-                    h('span', { key, className: 'living-chip' }, key)),
-                  entry.repository
-                    ? h('a', { href: entry.repository, target: '_blank', rel: 'noreferrer' }, '仓库')
-                    : null),
-                entry.broken ? h('div', { className: 'living-field-error' }, entry.broken) : null,
+        error ? h('div', { className: 'living-field-error' }, `读取失败：${error}`) : null,
+        ...(value ?? []).map((entry) => h('div', { key: entry.id, className: 'living-card' },
+          h('div', { className: 'living-gem-head' },
+            h('span', { className: 'living-gem-name' }, `${entry.name}（${entry.id}）`),
+            h('span', { className: 'living-muted' }, `${entry.package}@${entry.version}`),
+            Badge({
+              tone: entry.installed ? 'ok' : 'muted',
+              children: entry.installed ? `已安装 ${entry.installedVersion ?? ''}` : '未安装',
+            })),
+          entry.description ? h('div', { className: 'living-muted' }, entry.description) : null,
+          h('div', { className: 'living-chips' },
+            ...Object.entries(entry.capabilities ?? {}).filter(([, enabled]) => enabled).map(([key]) =>
+              h('span', { key, className: 'living-chip' }, key)),
+            entry.repository
+              ? h('a', { href: entry.repository, target: '_blank', rel: 'noreferrer' }, '仓库')
+              : null),
+          entry.broken ? h('div', { className: 'living-field-error' }, entry.broken) : null,
+          h('div', { className: 'living-controls' },
+            entry.installed
+              ? h(Button, {
+                  variant: 'outline',
+                  size: 'sm',
+                  disabled: Boolean(busy),
+                  onClick: () => setConfirm({ kind: 'uninstall', entry }),
+                }, '卸载')
+              : h(Button, {
+                  variant: 'primary',
+                  size: 'sm',
+                  disabled: Boolean(busy),
+                  onClick: () => setConfirm({ kind: 'install', entry }),
+                }, '安装')),
+          confirm?.entry.id === entry.id
+            ? h('div', { className: 'living-field' },
+                h('div', { className: 'living-field-help' },
+                  confirm.kind === 'install'
+                    ? `安装 ${entry.package}@${entry.version}？会从 npm 下载；宝石的 MCP 与通道代码在宿主里运行。`
+                    : `卸载 ${entry.name}？只删包代码与 media 缓存，保留 config、凭据和 life.db 里的记忆。`),
                 h('div', { className: 'living-controls' },
-                  entry.installed
-                    ? h(Button, {
-                        variant: 'outline',
-                        size: 'sm',
-                        disabled: Boolean(busy),
-                        onClick: () => setConfirm({ kind: 'uninstall', entry }),
-                      }, '卸载')
-                    : h(Button, {
-                        variant: 'primary',
-                        size: 'sm',
-                        disabled: Boolean(busy),
-                        onClick: () => setConfirm({ kind: 'install', entry }),
-                      }, '安装')),
-                confirm?.entry.id === entry.id
-                  ? h('div', { className: 'living-field' },
-                      h('div', { className: 'living-field-help' },
-                        confirm.kind === 'install'
-                          ? `安装 ${entry.package}@${entry.version}？会从 npm 下载；宝石的 MCP 与通道代码在宿主里运行。`
-                          : `卸载 ${entry.name}？只删包代码与 media 缓存，保留 config、凭据和 life.db 里的记忆。`),
-                      h('div', { className: 'living-controls' },
-                        h(Button, {
-                          variant: 'primary',
-                          size: 'sm',
-                          disabled: Boolean(busy),
-                          onClick: () => run(confirm.kind, entry),
-                        }, confirm.kind === 'install' ? '确认安装' : '确认卸载'),
-                        h(Button, { variant: 'ghost', size: 'sm', onClick: () => setConfirm(null) }, '取消')))
-                  : null)),
-              busy ? h('div', { className: 'living-muted' }, busy) : null,
-              actionError ? h('div', { className: 'living-field-error' }, actionError) : null))
-          : null)
+                  h(Button, {
+                    variant: 'primary',
+                    size: 'sm',
+                    disabled: Boolean(busy),
+                    onClick: () => run(confirm.kind, entry),
+                  }, confirm.kind === 'install' ? '确认安装' : '确认卸载'),
+                  h(Button, { variant: 'ghost', size: 'sm', onClick: () => setConfirm(null) }, '取消')))
+            : null)),
+        busy ? h('div', { className: 'living-muted' }, busy) : null,
+        actionError ? h('div', { className: 'living-field-error' }, actionError) : null))
     }
 
     function GemsPanel() {
       const [nonce, setNonce] = React.useState(0)
+      const [active, setActive] = React.useState(null)
+      const [storeOpen, setStoreOpen] = React.useState(false)
       const { value, error } = useRpc('gems', { nonce }, 15_000)
       const refresh = () => setNonce((current) => current + 1)
+      const gems = value ?? []
+      const current = gems.some((gem) => gem.id === active) ? active : (gems[0]?.id ?? null)
       return h('div', { className: 'living-field' },
-        h(GemStorePanel, { onChanged: refresh }),
         error
           ? h('div', { className: 'living-empty' }, `读取失败：${error}`)
           : !value
             ? h('div', { className: 'living-empty' }, '加载中…')
-            : value.length === 0
-              ? h('div', { className: 'living-empty' }, '还没有加载宝石；从上面的宝石库添加，或用 gemDirs 加载本地目录。')
-              : h('div', { className: 'living-grid' },
-                  ...value.map((gem) => h(GemCard, { key: gem.id, gem, onChanged: refresh }))))
+            : h('div', { className: 'living-subpage' },
+                h('div', { className: 'living-subtabs' },
+                  h('div', { className: 'living-subtabs-list', role: 'tablist', 'aria-label': '宝石' },
+                    ...gems.map((gem) => h('button', {
+                      key: gem.id,
+                      type: 'button',
+                      role: 'tab',
+                      'aria-selected': gem.id === current,
+                      className: gem.id === current ? 'living-subtab living-subtab-active' : 'living-subtab',
+                      onClick: () => setActive(gem.id),
+                    }, gem.name))),
+                  h(Button, {
+                    variant: 'outline',
+                    size: 'sm',
+                    icon: h(IconPlusOutlineRegular, { size: 14 }),
+                    onClick: () => setStoreOpen(true),
+                  }, '添加宝石')),
+                storeOpen ? h(GemStore, { onClose: () => setStoreOpen(false), onChanged: refresh }) : null,
+                gems.length === 0
+                  ? h('div', { className: 'living-empty' }, '还没有加载宝石；点右上角“添加宝石”，或用 gemDirs 加载本地目录。')
+                  : h('div', { className: 'living-field' },
+                      ...gems.map((gem) => h('div', {
+                        key: gem.id,
+                        style: gem.id === current ? undefined : { display: 'none' },
+                      }, h(GemCard, { gem, onChanged: refresh }))))))
     }
 
     // ── rounds / memory / outbox / reports ──────────────────────────────
@@ -2488,6 +2541,12 @@ function installStyles() {
 .living-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:start}
 .living-card{border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:10px;padding:14px 16px;background:color-mix(in srgb,currentColor 3%,transparent);display:flex;flex-direction:column;gap:8px;min-width:0}
 .living-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:600}
+.living-subpage{display:flex;flex-direction:column;gap:10px;min-width:0}
+.living-subtabs{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}
+.living-subtabs-list{display:flex;align-items:stretch;gap:2px;min-width:0;overflow-x:auto;overflow-y:hidden}
+.living-subtab{appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#888);font:inherit;font-size:12px;line-height:1.4;padding:7px 10px 5px;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+.living-subtab:hover{color:inherit}
+.living-subtab-active{color:inherit;font-weight:600;border-bottom-color:var(--dsw-alias-state-business-primary,#3a6ea5)}
 .living-row{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.5;min-width:0;flex-wrap:wrap}
 .living-row-label{min-width:104px;color:var(--dsw-alias-label-tertiary,#888)}
 .living-muted{color:var(--dsw-alias-label-tertiary,#888);font-size:12px}

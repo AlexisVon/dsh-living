@@ -2,7 +2,7 @@
 
 `dsh-living` 的核心包：一个按设定活着的 agent 运行时。
 
-**状态**：v0.2.0。
+**状态**：v0.3.0。
 
 ## 它做什么
 
@@ -21,7 +21,7 @@
 dsh plugin --profile <name> add dsh-living
 ```
 
-安装后在 **Living → 宝石 → 添加宝石** 从内置宝石库安装 B站 / 微信。宝石是普通 npm 包，下载到 `$DSH_HOME/living/gems`，不进入 DSH 的插件列表。
+安装后在 **Living → 宝石 → 添加宝石** 从内置宝石库安装 B站 / 微信 / 小佩喂食器。宝石是普通 npm 包，下载到 `$DSH_HOME/living/gems`，不进入 DSH 的插件列表。
 
 ## 目录
 

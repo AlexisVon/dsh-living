@@ -60,6 +60,38 @@ test('登录监督器：cancel 结束子进程', async (t) => {
   assert.equal(supervisor.status('demo').status, 'cancelled')
 })
 
+test('登录监督器：prompt → input → done', async (t) => {
+  const { supervisor } = setup(
+    t,
+    [
+      "import { createInterface } from 'node:readline'",
+      "const emit = (value) => process.stdout.write(JSON.stringify(value) + '\\n')",
+      "const rl = createInterface({ input: process.stdin })",
+      "emit({ type: 'prompt', id: 'username', label: '账号' })",
+      "rl.on('line', (line) => {",
+      "  const msg = JSON.parse(line)",
+      "  if (msg.id === 'username') emit({ type: 'prompt', id: 'password', kind: 'password', label: '密码' })",
+      "  else if (msg.id === 'password') emit({ type: 'done', account: { name: 'n', id: '1' } })",
+      '})',
+    ].join('\n'),
+  )
+  supervisor.start('demo')
+  const first = await waitStatus(supervisor, 'demo', (value) => value.prompts?.some((prompt) => prompt.id === 'username'))
+  assert.equal(first.status, 'wait')
+  assert.equal(first.prompts[0].kind, 'text')
+
+  const afterInput = supervisor.input('demo', 'username', 'alice')
+  assert.deepEqual(afterInput.prompts, [])
+  const second = await waitStatus(supervisor, 'demo', (value) => value.prompts?.some((prompt) => prompt.id === 'password'))
+  assert.equal(second.prompts[0].kind, 'password')
+
+  supervisor.input('demo', 'password', 'secret')
+  const done = await waitStatus(supervisor, 'demo', (value) => value.status === 'done')
+  assert.equal(done.status, 'done')
+  assert.deepEqual(done.prompts, [])
+  assert.throws(() => supervisor.input('demo', 'nope', 'x'), /未知登录输入/)
+})
+
 test('登录监督器：子进程异常退出 → error', async (t) => {
   const { supervisor } = setup(t, "process.stderr.write('boom'); process.exit(3)\n")
   supervisor.start('demo')

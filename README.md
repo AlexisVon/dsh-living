@@ -4,7 +4,7 @@
 
 一个**按设定活着**的 agent 运行时：有自己的作息、记忆和人格，通过 **WorldGem** 接入真实世界。
 
-> 状态：v0.2.0。核心、协议与两颗真实宝石（B站 / 微信）已实现；宝石从 npm 下载到 living 自己的目录，不占用 DSH 插件列表。
+> 状态：v0.3.0。核心、协议与三颗真实宝石（B站 / 微信 / 小佩喂食器）已实现；宝石从 npm 下载到 living 自己的目录，不占用 DSH 插件列表。
 
 ## 它是什么
 
@@ -21,7 +21,7 @@
 dsh plugin --profile <profile> add dsh-living
 ```
 
-宝石不在市场里逐个安装。装好 living 后，打开 **Living → 宝石 → 添加宝石**，从内置宝石库选择 B站 / 微信；living 会从 npm 下载到自己的目录：
+宝石不在市场里逐个安装。装好 living 后，打开 **Living → 宝石 → 添加宝石**，从内置宝石库选择 B站 / 微信 / 小佩喂食器；living 会从 npm 下载到自己的目录：
 
 ```
 $DSH_HOME/living/
@@ -59,6 +59,7 @@ packages/
   gem-example/   → npm: dsh-gem-example         参考宝石
   gem-bili/      → npm: dsh-gem-bili            B站宝石（能力 + 私信 + 历史私信 + 公开互动）
   gem-wechat/    → npm: dsh-gem-wechat          微信宝石（独立 iLink bot，文本/图片/文件私聊）
+  gem-petkit/    → npm: dsh-gem-petkit          小佩喂食器（D4H 状态/出粮/记录/看图）
 docs/            架构与立项
 scripts/          selfcheck / 回测等维护脚本
 spikes/          上线前验证脚本

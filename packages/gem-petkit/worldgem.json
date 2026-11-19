@@ -1,0 +1,171 @@
+{
+  "id": "petkit",
+  "name": "小佩喂食器",
+  "version": "0.1.0",
+  "description": "小佩 D4H 单仓摄像头版：状态、出粮、进食记录与计划；重要异常唤醒，其余按需拉取。",
+  "mcp": {
+    "command": "node",
+    "args": ["mcp/server.js"],
+    "tools": ["petkit_status", "petkit_history", "petkit_media", "petkit_plan", "petkit_feed"]
+  },
+  "event": {
+    "protocol": ["ingest"],
+    "visibility": "private"
+  },
+  "channel": {
+    "command": "node",
+    "args": ["channel/run.mjs"]
+  },
+  "notify": {
+    "push": { "mode": "silent", "budget": { "limit": false, "count": false } },
+    "trusted": { "mode": "ring", "budget": { "limit": true, "count": true } }
+  },
+  "skill": "skill/SKILL.md",
+  "config": {
+    "fields": [
+      {
+        "key": "maxPortion",
+        "label": "单次出粮上限",
+        "type": "number",
+        "default": 20,
+        "min": 10,
+        "max": 50,
+        "step": 10,
+        "unit": "克",
+        "group": "限制",
+        "help": "D4H 只接受 10/20/30/40/50；超过上限直接拒绝"
+      },
+      {
+        "key": "dailyFeedCap",
+        "label": "手动出粮日上限",
+        "type": "number",
+        "default": 40,
+        "min": 10,
+        "max": 200,
+        "step": 10,
+        "unit": "克/天",
+        "group": "限制",
+        "help": "只计宝石自己发起的出粮；App 里的手动出粮不占额度"
+      },
+      {
+        "key": "feedVerifySeconds",
+        "label": "出粮确认等待",
+        "type": "number",
+        "default": 15,
+        "min": 0,
+        "max": 60,
+        "step": 1,
+        "unit": "秒",
+        "group": "出粮",
+        "help": "提交后等待设备确认的秒数；0 表示不等待，直接返回未确认"
+      },
+      {
+        "key": "pollSeconds",
+        "label": "轮询间隔",
+        "type": "number",
+        "default": 120,
+        "min": 60,
+        "max": 600,
+        "step": 10,
+        "unit": "秒",
+        "group": "轮询",
+        "help": "拉状态与今日出粮记录的间隔；太快会被小佩限流"
+      },
+      {
+        "key": "historyDays",
+        "label": "历史深度",
+        "type": "number",
+        "default": 7,
+        "min": 1,
+        "max": 30,
+        "step": 1,
+        "unit": "天",
+        "group": "历史",
+        "help": "petkit_history 最多回看的天数"
+      },
+      {
+        "key": "foodLowLevel",
+        "label": "缺粮阈值",
+        "type": "number",
+        "default": 1,
+        "min": 0,
+        "max": 10,
+        "step": 1,
+        "group": "告警",
+        "help": "state.food 小于等于此值视为缺粮；先对照小佩 App 校准"
+      },
+      {
+        "key": "desiccantWarnDays",
+        "label": "干燥剂提醒",
+        "type": "number",
+        "default": 7,
+        "min": 0,
+        "max": 30,
+        "step": 1,
+        "unit": "天",
+        "group": "告警",
+        "help": "剩余天数小于等于此值时落一条静默提醒"
+      },
+      {
+        "key": "offlineMinutes",
+        "label": "离线判定",
+        "type": "number",
+        "default": 30,
+        "min": 5,
+        "max": 240,
+        "step": 5,
+        "unit": "分钟",
+        "group": "告警",
+        "help": "连续不可达超过此时间才唤醒"
+      },
+      {
+        "key": "batteryLowPercent",
+        "label": "低电量阈值",
+        "type": "number",
+        "default": 20,
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "unit": "%",
+        "group": "告警",
+        "help": "只在电池供电（pim=2）时有意义"
+      },
+      {
+        "key": "timezone",
+        "label": "时区",
+        "type": "text",
+        "default": "Asia/Shanghai",
+        "group": "身份",
+        "help": "日期与出粮时间使用的时区"
+      }
+    ]
+  },
+  "capabilities": {
+    "text": false,
+    "image": false,
+    "voice": false,
+    "group": false,
+    "device": true,
+    "camera": true
+  },
+  "limits": {
+    "maxChars": 2000,
+    "perMinute": 60
+  },
+  "etiquette": [
+    "喂食是物理动作：先看今日总量和计划，无明显理由不要主动加餐",
+    "出粮结果未知时不要重试；先查 petkit_history 或等下一轮确认",
+    "这台 D4H 没有宠物身份识别，不要声称知道是哪只猫吃的",
+    "日常进食与猫出现不推送；需要时用 petkit_history 主动拉",
+    "预览链接约一小时过期，现拉现看，不要引用很久以前的链接",
+    "缺粮、离线、故障、出粮失败会主动唤醒；其余时间不用主动汇报"
+  ],
+  "failure_hints": {
+    "gem_cookie_expired": "小佩登录态失效：在宝石页重新输入账号密码登录",
+    "gem_unavailable": "小佩喂食器离线或云接口不可达，本轮不要声称喂过",
+    "config_invalid": "出粮量必须是 10/20/30/40/50，且不超过单次/日上限",
+    "provider_rate": "小佩云接口限流，稍后再试，不要连续重试",
+    "provider_timeout": "小佩云接口超时，先说明情况，不要连续重试",
+    "unknown": "小佩接口返回未知错误，或出粮结果未确认；先停下说明，不要重试"
+  }
+}

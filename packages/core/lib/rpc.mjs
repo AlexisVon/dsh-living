@@ -269,12 +269,19 @@ export function createAdminRpc({
         const result = await setGemToken(gem.manifest.id, token)
         return ok({ id: gem.manifest.id, ...result })
       }
-      if (endpoint === 'gemLoginStart' || endpoint === 'gemLoginStatus' || endpoint === 'gemLoginCancel') {
+      if (endpoint === 'gemLoginStart' || endpoint === 'gemLoginStatus' || endpoint === 'gemLoginCancel' || endpoint === 'gemLoginInput') {
         if (!gemLogin) return fail('login_unavailable', '当前宿主没有登录监督器')
         const gem = requiredGem(payload, gems)
         const id = gem.manifest.id
         if (endpoint === 'gemLoginStart') return ok(gemLogin.start(id))
         if (endpoint === 'gemLoginStatus') return ok(gemLogin.status(id))
+        if (endpoint === 'gemLoginInput') {
+          if (typeof gemLogin.input !== 'function') return fail('login_unavailable', '当前登录监督器不支持输入')
+          const promptId = typeof payload?.promptId === 'string' ? payload.promptId : ''
+          if (promptId === '') return fail('invalid_prompt', 'promptId 必填')
+          if (typeof payload?.value !== 'string') return fail('invalid_value', 'value 必须是字符串')
+          return ok(gemLogin.input(id, promptId, payload.value))
+        }
         return ok(gemLogin.cancel(id))
       }
       if (endpoint === 'reports') return ok(listReports(store))

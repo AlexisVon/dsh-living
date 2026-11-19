@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 A runtime for an agent that **lives by its own settings**: its own schedule, memory and persona, connected to the real world through **WorldGem**.
 
-> Status: v0.2.0. The core, protocol and two real gems (Bilibili / WeChat) are implemented. Gems are downloaded from npm into living's own directory and do not add DSH plugin entries.
+> Status: v0.3.0. The core, protocol and three real gems (Bilibili / WeChat / PetKit feeder) are implemented. Gems are downloaded from npm into living's own directory and do not add DSH plugin entries.
 
 ## What it is
 
@@ -27,7 +27,7 @@ Install `dsh-living` from the DSH plugin market (the only package that is instal
 dsh plugin --profile <profile> add dsh-living
 ```
 
-Gems are not installed one plugin at a time. After installing living, open **Living → Gems → Add gem** and choose Bilibili / WeChat from the built-in catalog. Living downloads them from npm into its own directory:
+Gems are not installed one plugin at a time. After installing living, open **Living → Gems → Add gem** and choose Bilibili / WeChat / PetKit feeder from the built-in catalog. Living downloads them from npm into its own directory:
 
 ```
 $DSH_HOME/living/
@@ -59,6 +59,7 @@ packages/
   gem-example/   → npm: dsh-gem-example         reference gem
   gem-bili/      → npm: dsh-gem-bili            Bilibili gem
   gem-wechat/    → npm: dsh-gem-wechat          WeChat gem
+  gem-petkit/    → npm: dsh-gem-petkit          PetKit feeder gem
 docs/            architecture and project docs
 scripts/         selfcheck / backtest maintenance scripts
 spikes/          pre-release probes

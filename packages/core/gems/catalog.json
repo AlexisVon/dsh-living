@@ -29,6 +29,22 @@
         "group": false,
         "public": false
       }
+    },
+    {
+      "id": "petkit",
+      "name": "小佩喂食器",
+      "package": "dsh-gem-petkit",
+      "version": "0.1.0",
+      "description": "小佩 D4H 单仓摄像头版：状态、出粮、进食记录、计划与看图；重要异常唤醒，其余按需拉取。",
+      "repository": "https://github.com/AlexisVon/dsh-living/tree/main/packages/gem-petkit",
+      "capabilities": {
+        "text": false,
+        "image": false,
+        "voice": false,
+        "group": false,
+        "device": true,
+        "camera": true
+      }
     }
   ]
 }

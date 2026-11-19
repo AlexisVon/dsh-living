@@ -1,0 +1,45 @@
+{
+  "name": "dsh-gem-petkit",
+  "version": "0.1.0",
+  "description": "PetKit D4H WorldGem for dsh-living: status, feeding history, media, plan and manual feed",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexisVon/dsh-living.git",
+    "directory": "packages/gem-petkit"
+  },
+  "homepage": "https://github.com/AlexisVon/dsh-living/tree/main/packages/gem-petkit",
+  "bugs": {
+    "url": "https://github.com/AlexisVon/dsh-living/issues"
+  },
+  "author": "AlexisVon",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "worldgem.json",
+    "skill",
+    "mcp",
+    "channel",
+    "lib",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/",
+    "login": "node channel/login.mjs",
+    "run": "node channel/run.mjs",
+    "check": "for f in lib/*.mjs channel/*.mjs mcp/*.js; do node --check \"$f\" || exit 1; done"
+  },
+  "dependencies": {
+    "dsh-living-protocol": "workspace:*"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "worldgem",
+    "petkit",
+    "feeder",
+    "camera"
+  ]
+}
