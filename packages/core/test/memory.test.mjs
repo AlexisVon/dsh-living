@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createStore } from '../lib/store.mjs'
-import { buildL0, expandGraph, selectL0, collectMemoryItems, formatCold } from '../lib/memory.mjs'
+import { buildL0, expandGraph, selectL0, collectMemoryItems, formatCold, formatEntry } from '../lib/memory.mjs'
 import { recall } from '../lib/recall.mjs'
 import { estimateTokens } from '../lib/text.mjs'
 
@@ -102,6 +102,11 @@ test('低保真条目可发言，但 drivesAction=false', () => {
 test('formatCold 固定措辞', () => {
   const line = formatCold({ keyword: '显卡', lastTs: Date.UTC(2026, 8, 1) })
   assert.equal(line, '- 你隐约记得（2026-09）：显卡 —— 细节已不可考')
+})
+
+test('记忆日期按本地时区取，不按 UTC', () => {
+  assert.match(formatEntry({ text: 'x', ts: Date.UTC(2026, 8, 1, 18) }, 480), /\[2026-09-02\]/)
+  assert.match(formatCold({ keyword: '显卡', lastTs: Date.UTC(2026, 8, 31, 18) }, 480), /（2026-10）/)
 })
 
 test('collectMemoryItems：事件/情节/事实/导入的来源与可行动性', async (t) => {

@@ -510,9 +510,9 @@ export function createRuntime({
       now: nowMs,
       rng,
       edgesFor: memoryEdgesFor,
+      tzOffsetMinutes: tz,
     })
     const handoff = await takeHandoff(nowMs)
-    const budgetView = budget.check(budgetState, nowMs, budgetCfg)
     const available = availableGems(nowMs)
     const unavailable = gems.filter((gem) => !available.includes(gem))
     const gemNote = unavailable.length
@@ -523,13 +523,7 @@ export function createRuntime({
       // L0 is a session-start index: the conversation keeps it in context afterwards.
       l0: l0PromptSessionId == null ? lastL0.text : '',
       handoff,
-      situation: situationLine({
-        now: nowMs,
-        tzOffsetMinutes: tz,
-        status,
-        budget: budgetView,
-        nextWakeAt: clockState.nextWakeAt,
-      }),
+      situation: situationLine({ now: nowMs, tzOffsetMinutes: tz }),
       events,
       trigger: triggerInstruction(decision),
       degraded: status === RUNTIME_STATUS.DEGRADED ? { reason: lastError ?? '局部能力不可用' } : null,
@@ -560,7 +554,7 @@ export function createRuntime({
       failures += 1
       lastError = error.message
       if (failures >= 3) status = RUNTIME_STATUS.DEGRADED
-      await store.updateAnchor(roundId, { endedAt: now(), outcome: 'error', errorCode: mapFailureCode(error.code) })
+      await store.updateAnchor(roundId, { endedAt: now(), outcome: 'error', errorCode: mapFailureCode(error.code ?? error.message) })
       await store.appendEvent({ kind: 'round_failed', ts: now(), source: 'living', payload: { roundId, error: error.message } })
       await persist()
       throw error
@@ -1149,6 +1143,7 @@ export function createRuntime({
       now: nowMs,
       rng,
       edgesFor: memoryEdgesFor,
+      tzOffsetMinutes: tz,
     }).text
     const localDate = (ts) => (Number.isFinite(ts)
       ? new Date(ts + tz * 60000).toISOString().slice(0, 10)
@@ -1488,6 +1483,7 @@ export function createRuntime({
     snapshot,
     service,
     channel,
+    timezoneOffsetMinutes: tz,
     get clockState() {
       return clockState
     },

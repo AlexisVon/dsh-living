@@ -95,8 +95,8 @@ export function mergeFacts(existing = [], incoming = []) {
   return { facts: [...map.values()], added, updated }
 }
 
-export function buildColdClues(rows, limit = 8) {
-  return rows.slice(0, limit).map(formatCold).join('\n')
+export function buildColdClues(rows, limit = 8, tzOffsetMinutes = null) {
+  return rows.slice(0, limit).map((row) => formatCold(row, tzOffsetMinutes)).join('\n')
 }
 
 function factKey(fact) {

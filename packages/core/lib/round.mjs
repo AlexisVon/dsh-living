@@ -63,11 +63,13 @@ export function formatEvents(events, { limit = EVENT_PROMPT_LIMIT } = {}) {
   return lines.join('\n')
 }
 
-export function situationLine({ now, tzOffsetMinutes, status, budget, nextWakeAt = null }) {
+export function localStamp(ts, tzOffsetMinutes = -new Date().getTimezoneOffset()) {
+  return new Date(ts + tzOffsetMinutes * 60000).toISOString().slice(0, 16).replace('T', ' ')
+}
+
+export function situationLine({ now, tzOffsetMinutes }) {
   const tz = tzOffsetMinutes ?? -new Date().getTimezoneOffset()
-  const stamp = new Date(now + tz * 60000).toISOString().slice(0, 16).replace('T', ' ')
-  const wake = Number.isFinite(nextWakeAt) ? new Date(nextWakeAt).toISOString().slice(0, 16).replace('T', ' ') : '未知'
-  return `时间：${stamp}（UTC${tz >= 0 ? '+' : ''}${tz / 60}）；状态：${status}；今日剩余 token：${budget.tokensLeft}；剩余轮次：${budget.roundsLeft}；下次硬唤醒：${wake}`
+  return `时间：${localStamp(now, tz)}（UTC${tz >= 0 ? '+' : ''}${tz / 60}）`
 }
 
 export function triggerInstruction(decision) {

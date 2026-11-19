@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Pack (and optionally publish) dsh-living 0.3.0 and dsh-gem-petkit 0.1.0.
+  Pack (and optionally publish) dsh-living 0.3.1 and dsh-gem-petkit 0.1.0.
 
 .DESCRIPTION
   Run this on the machine where npm 2FA is available.
 
   Default: build both tarballs in %TEMP%\dsh-living-release and print their paths.
-  Upload them yourself in this order: dsh-gem-petkit-0.1.0.tgz, then dsh-living-0.3.0.tgz.
+  Upload them yourself in this order: dsh-gem-petkit-0.1.0.tgz, then dsh-living-0.3.1.tgz.
 
   -Publish: publish the tarballs with npm publish; the 2FA prompt appears here.
   -Staged:  add --staged to npm publish (only if your npm CLI supports staged publishing).
@@ -70,7 +70,7 @@ Invoke-Pack 'packages/gem-petkit' 'dsh-gem-petkit'
 Invoke-Pack 'packages/core' 'dsh-living'
 
 $gem = Join-Path $out 'dsh-gem-petkit-0.1.0.tgz'
-$core = Join-Path $out 'dsh-living-0.3.0.tgz'
+$core = Join-Path $out 'dsh-living-0.3.1.tgz'
 if (-not (Test-Path $gem) -or -not (Test-Path $core)) {
   throw "Expected tarballs not found in $out"
 }
@@ -83,7 +83,7 @@ Write-Host "  $core"
 if (-not $Publish) {
   Write-Host ''
   Write-Host 'Pack-only mode. Upload these tarballs with your normal npm 2FA flow.'
-  Write-Host 'Publish order: dsh-gem-petkit-0.1.0.tgz first, then dsh-living-0.3.0.tgz.'
+  Write-Host 'Publish order: dsh-gem-petkit-0.1.0.tgz first, then dsh-living-0.3.1.tgz.'
   Write-Host 'To publish from this machine: rerun with -Publish (add -Staged if supported).'
   exit 0
 }
@@ -101,7 +101,7 @@ Write-Host 'Publishing dsh-gem-petkit 0.1.0...'
 & npm @publishArgs $gem
 if ($LASTEXITCODE -ne 0) { throw 'dsh-gem-petkit publish failed' }
 
-Write-Host 'Publishing dsh-living 0.3.0...'
+Write-Host 'Publishing dsh-living 0.3.1...'
 & npm @publishArgs $core
 if ($LASTEXITCODE -ne 0) { throw 'dsh-living publish failed' }
 

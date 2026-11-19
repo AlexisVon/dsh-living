@@ -792,6 +792,9 @@ test('私聊不调用判决层；规则表命中也不调用', async (t) => {
   const direct = await rt.sendOutbound({ gem: 'bili', to: 'uid:9', text: '在吗', visibility: 'private' })
   assert.equal(direct.state, 'approved')
 
+  const trustedHit = await rt.sendOutbound({ gem: 'bili', to: 'uid:9', text: '我的手机 13800138000', visibility: 'private' })
+  assert.equal(trustedHit.state, 'approved')
+
   const ruleHit = await rt.sendOutbound({ gem: 'bili', to: 'reply:1:2:3', text: '我的手机 13800138000', visibility: 'public' })
   assert.equal(ruleHit.state, 'blocked')
   assert.equal(ruleHit.ruleId, 'R-01')
@@ -816,7 +819,7 @@ test('显式 limiter verdict 优先于判决层', async (t) => {
   assert.equal(calls, 0)
 })
 
-test('外发闸门：白名单直发、非白名单挂起、规则命中拒绝', async (t) => {
+test('外发闸门：白名单私聊直发（规则表也跳过）、非白名单挂起/规则拦截', async (t) => {
   const { rt, store } = await setup(t, {
     runner: async () => ({ tokens: 0 }),
     config: { whitelist: ['uid_ok'] },
@@ -826,18 +829,23 @@ test('外发闸门：白名单直发、非白名单挂起、规则命中拒绝',
   assert.equal(allow.queued, true)
   assert.equal(allow.silent, true)
 
+  const trustedHit = await rt.sendOutbound({ gem: 'bili', to: 'uid_ok', text: '我的手机 13800138000', visibility: 'private' })
+  assert.equal(trustedHit.queued, true)
+  assert.equal(trustedHit.state, 'approved')
+
   const review = await rt.sendOutbound({ gem: 'bili', to: 'uid_new', text: '在', visibility: 'private' })
   assert.equal(review.queued, true)
   assert.equal(review.state, 'pending')
 
-  const blocked = await rt.sendOutbound({ gem: 'bili', to: 'uid_ok', text: '我的手机 13800138000', visibility: 'private' })
+  const blocked = await rt.sendOutbound({ gem: 'bili', to: 'uid_new', text: '我的手机 13800138000', visibility: 'private' })
   assert.equal(blocked.queued, false)
   assert.equal(blocked.state, 'blocked')
+  assert.equal(blocked.ruleId, 'R-01')
 
   const items = store.listOutbox({ gem: 'bili', limit: 10 })
-  assert.equal(items.length, 2, 'blocked 不进入 outbox')
+  assert.equal(items.length, 3, 'blocked 不进入 outbox')
   const claimable = await store.claimOutbox({ gem: 'bili', limit: 10, nowMs: NOW })
-  assert.equal(claimable.length, 1, '待确认的外发不可被 pull')
+  assert.equal(claimable.length, 2, '待确认的外发不可被 pull')
   assert.equal(claimable[0].to, 'uid_ok')
 })
 

@@ -106,12 +106,13 @@ export function selectL0({
   rng = Math.random,
   includeImports = false,
   edgesFor = null,
+  tzOffsetMinutes = null,
 }) {
   const eligible = includeImports ? items : items.filter((item) => item.source !== 'import')
   const result = recall({ items: eligible, cue, mood, channels, topK, now, rng })
   expandGraph(result, eligible, edgesFor, { limit: topK, now, enabled: channels.length === 0 || channels.includes('G1') })
   const coldest = coldestCueHit(eligible, result.recalled, cue, now)
-  const l0 = buildL0({ recalled: result.recalled, partialHits: result.partialHits, cold, coldest, budgetTokens, now })
+  const l0 = buildL0({ recalled: result.recalled, partialHits: result.partialHits, cold, coldest, budgetTokens, now, tzOffsetMinutes })
   return { ...l0, recall: result }
 }
 
@@ -155,10 +156,11 @@ export function buildL0({
   coldest = null,
   budgetTokens = L0_DEFAULT_TOKENS,
   now = Date.now(),
+  tzOffsetMinutes = null,
 }) {
-  const coldLines = cold.slice(0, COLD_CLUE_MAX).map((row) => formatCold(row))
+  const coldLines = cold.slice(0, COLD_CLUE_MAX).map((row) => formatCold(row, tzOffsetMinutes))
   const coldCost = coldLines.reduce((sum, line) => sum + estimateTokens(`${line}\n`), 0)
-  const coldestLine = coldest ? formatEntry(coldest) : null
+  const coldestLine = coldest ? formatEntry(coldest, tzOffsetMinutes) : null
   const reserve = coldestLine ? estimateTokens(`${coldestLine}\n`) : 0
   const available = Math.max(0, budgetTokens - coldCost - reserve)
 
@@ -166,7 +168,7 @@ export function buildL0({
   const lines = []
   let used = 0
   for (const entry of recalled) {
-    const line = formatEntry(entry)
+    const line = formatEntry(entry, tzOffsetMinutes)
     const cost = estimateTokens(`${line}\n`)
     if (used + cost > available) break
     entries.push(entry)
@@ -199,14 +201,19 @@ export function buildL0({
   }
 }
 
-export function formatEntry(entry) {
-  const date = Number.isFinite(entry.ts) ? new Date(entry.ts).toISOString().slice(0, 10) : '—'
+function localDate(ts, tzOffsetMinutes) {
+  const tz = tzOffsetMinutes ?? -new Date().getTimezoneOffset()
+  return new Date(ts + tz * 60000).toISOString().slice(0, 10)
+}
+
+export function formatEntry(entry, tzOffsetMinutes = null) {
+  const date = Number.isFinite(entry.ts) ? localDate(entry.ts, tzOffsetMinutes) : '—'
   const text = String(entry.text ?? '').replace(/\s+/g, ' ').trim()
   return `- [${date}] ${text}`
 }
 
-export function formatCold(row) {
-  const date = Number.isFinite(row.lastTs) ? new Date(row.lastTs).toISOString().slice(0, 7) : '很久以前'
+export function formatCold(row, tzOffsetMinutes = null) {
+  const date = Number.isFinite(row.lastTs) ? localDate(row.lastTs, tzOffsetMinutes).slice(0, 7) : '很久以前'
   const label = row.label20 || row.keyword || '某事'
   return `- 你隐约记得（${date}）：${label} —— 细节已不可考`
 }

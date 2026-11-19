@@ -1,5 +1,6 @@
 /**
- * Outbound gate: rule table → limiter (public/group) → whitelist. Every outbound
+ * Outbound gate: private messages to whitelisted targets skip the rule table;
+ * otherwise rule table → limiter (public/group) → whitelist. Every outbound
  * gets a pending record; only whitelisted targets may send silently.
  */
 
@@ -95,6 +96,19 @@ export function decideOutbound({
   limiter = null,
   rules = AUDIT_RULES,
 } = {}) {
+  const trusted = isWhitelisted({ target, gem, visibility }, whitelist)
+  if (visibility === 'private' && trusted) {
+    return {
+      decision: 'allow',
+      silent: true,
+      ruleId: null,
+      reason: '白名单直通',
+      verdictSource: 'whitelist',
+      hits: [],
+      requiresLimiter: false,
+    }
+  }
+
   const hits = checkRules(text, { visibility, rules })
   if (hits.length) {
     return {
@@ -134,7 +148,7 @@ export function decideOutbound({
     }
   }
 
-  if (isWhitelisted({ target, gem, visibility }, whitelist)) {
+  if (trusted) {
     return {
       decision: 'allow',
       silent: true,

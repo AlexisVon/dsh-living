@@ -18,9 +18,29 @@ test('规则表可枚举：R-01…R-05', () => {
   assert.deepEqual(AUDIT_RULES.map((r) => r.id), ['R-01', 'R-02', 'R-03', 'R-04', 'R-05'])
 })
 
-test('R-01 隐私与 R-02 承诺对私聊也生效', () => {
-  assert.equal(checkRules('我的手机 13800138000', { visibility: 'private' })[0].id, 'R-01')
-  assert.equal(checkRules('我保证明天给你', { visibility: 'private' })[0].id, 'R-02')
+test('R-01/R-02 对非白名单私聊生效；白名单私聊整表跳过', () => {
+  const phone = '我的手机 13800138000'
+  const promise = '我保证明天给你'
+  assert.equal(checkRules(phone, { visibility: 'private' })[0].id, 'R-01')
+  assert.equal(checkRules(promise, { visibility: 'private' })[0].id, 'R-02')
+
+  const blocked = decideOutbound({ text: phone, target: 'uid_9', visibility: 'private', whitelist: [] })
+  assert.equal(blocked.decision, 'block')
+  assert.equal(blocked.ruleId, 'R-01')
+
+  const direct = decideOutbound({ text: phone, target: 'uid_9', visibility: 'private', whitelist: ['uid_9'] })
+  assert.equal(direct.decision, 'allow')
+  assert.equal(direct.silent, true)
+})
+
+test('白名单只对私聊跳过规则表；公开/群仍按规则表', () => {
+  const pub = decideOutbound({ text: '我的手机 13800138000', target: 'uid_9', visibility: 'public', whitelist: ['uid_9'] })
+  assert.equal(pub.decision, 'block')
+  assert.equal(pub.ruleId, 'R-01')
+
+  const group = decideOutbound({ text: '扫码加我微信', target: 'uid_9', visibility: 'group', whitelist: ['uid_9'] })
+  assert.equal(group.decision, 'block')
+  assert.equal(group.ruleId, 'R-05')
 })
 
 test('R-03/R-05 只拦公开发言', () => {

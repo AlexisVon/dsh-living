@@ -4,7 +4,7 @@
  */
 
 import { findScope } from './lib/host-scope.mjs'
-import { formatEventLine } from './lib/round.mjs'
+import { formatEventLine, localStamp } from './lib/round.mjs'
 
 export const name = 'living-agent'
 export const inject = ['living', 'tools', 'systemPrompt']
@@ -115,13 +115,14 @@ export function apply(ctx) {
     run: async (args) => {
       const rows = living.events({ since: args.since ?? null, limit: args.limit ?? 50 })
       if (rows.length === 0) return '没有待处理的外部事件。'
-      return rows.map((event) => `${event.ts} ${formatEventLine(event)}`).join('\n')
+      const tz = living.timezoneOffsetMinutes ?? -new Date().getTimezoneOffset()
+      return rows.map((event) => `${localStamp(event.ts, tz)} ${formatEventLine(event)}`).join('\n')
     },
   }))
 
   ctx.tools.register(tool({
     name: 'living_send',
-    description: 'Send one outbound message through the audit gate. Non-whitelisted targets wait for confirmation; public/group need the limiter. Attach local files with media (absolute paths; kind image or file). The result includes remaining proactive quota when the gem has reported it.',
+    description: 'Send one outbound message through the audit gate. Private sends to whitelisted targets go straight through; non-whitelisted targets wait for confirmation; public/group always pass the rule table and limiter. Attach local files with media (absolute paths; kind image or file). The result includes remaining proactive quota when the gem has reported it.',
     parameters: objectSchema({
       gem: { type: 'string' },
       to: { type: 'string' },

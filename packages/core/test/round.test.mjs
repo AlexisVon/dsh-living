@@ -97,19 +97,9 @@ test('日程/事件/探索/恢复的指令各不相同', () => {
   assert.equal(triggerInstruction({ trigger: 'heartbeat', detail: {} }), '')
 })
 
-test('情境行带时间、状态、预算与下次唤醒', () => {
-  const line = situationLine({
-    now: NOW,
-    tzOffsetMinutes: 480,
-    status: 'RUNNING',
-    budget: { tokensLeft: 100, roundsLeft: 5 },
-    nextWakeAt: NOW + 3600000,
-  })
-  assert.ok(line.includes('2026-11-17 12:00'))
-  assert.ok(line.includes('UTC+8'))
-  assert.ok(line.includes('100'))
-  assert.ok(line.includes('5'))
-  assert.ok(line.includes('下次硬唤醒'))
+test('情境行只带本地时间', () => {
+  const line = situationLine({ now: NOW, tzOffsetMinutes: 480 })
+  assert.equal(line, '时间：2026-11-17 12:00（UTC+8）')
 })
 
 test('executeRound 透传 runner 结果并补默认值', async () => {
