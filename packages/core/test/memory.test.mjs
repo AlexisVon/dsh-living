@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { createStore } from '../lib/store.mjs'
 import { buildL0, expandGraph, selectL0, collectMemoryItems, formatCold } from '../lib/memory.mjs'
+import { recall } from '../lib/recall.mjs'
 import { estimateTokens } from '../lib/text.mjs'
 
 const NOW = Date.UTC(2026, 10, 17, 12)
@@ -35,10 +36,10 @@ test('候选池取最近 N 条，不是最早 N 条', async (t) => {
     rmSync(home, { recursive: true, force: true })
   })
   for (let index = 1; index <= 3; index += 1) {
-    await store.appendEvent({ id: `ev${index}`, ts: index, kind: 'note', payload: { text: `e${index}`, importance: 0.9 } })
+    await store.appendEvent({ id: `ev${index}`, ts: index, kind: 'message', payload: { text: `e${index}`, importance: 0.9 } })
   }
   const items = collectMemoryItems(store, { limit: 2, now: NOW })
-  assert.deepEqual(items.filter((item) => item.kind === 'note').map((item) => item.id), ['ev2', 'ev3'])
+  assert.deepEqual(items.filter((item) => item.kind === 'message').map((item) => item.id), ['ev2', 'ev3'])
 })
 
 test('G1：图关系把邻居条目带进召回', () => {
@@ -111,7 +112,8 @@ test('collectMemoryItems：事件/情节/事实/导入的来源与可行动性',
     rmSync(dir, { recursive: true, force: true })
   })
 
-  await store.appendEvent({ id: 'e1', ts: NOW, kind: 'note', source: 'bili', payload: { text: '显卡散热坏了', importance: 0.4 } })
+  await store.appendEvent({ id: 'e1', ts: NOW, kind: 'message', source: 'bili', payload: { text: '显卡散热坏了', importance: 0.4 } })
+  await store.appendEvent({ id: 'op1', ts: NOW, kind: 'outbound_decision', source: 'living', payload: { text: '{"outboxId":"x"}' } })
   await store.appendEpisode({ id: 'ep1', tsStart: NOW - 10 * MIN, tsEnd: NOW, title: '修电脑', summary: '换了风扇', importance: 0.6, eventIds: ['e1'] })
   await store.upsertFact({ id: 'f1', subject: '小明', predicate: '喜欢', object: '看展', confidence: 0.8, firstSeen: NOW - MIN, lastSeen: NOW, source: 'chat', eventIds: ['e1'] })
   await store.setFacets('fact', 'f1', { who: ['小明'] })
@@ -134,4 +136,42 @@ test('collectMemoryItems：事件/情节/事实/导入的来源与可行动性',
   assert.equal(imported.drivesAction, false)
   assert.deepEqual(imported.eventRefs, [])
   assert.equal(imported.origin, 'import')
+  assert.ok(!items.some((i) => i.id === 'op1'), '运行流水不进记忆候选池')
+})
+
+test('collectMemoryItems：journal 直接召回，整理后让位给归一化条目', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'living-memory-'))
+  const store = createStore({ path: join(dir, 'life.db') })
+  t.after(async () => {
+    await store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  await store.appendJournalEntry({ id: 'jr_1', date: '2026-11-17', ts: NOW, text: '今天读了郑渊洁的 AI 动画新闻' })
+  const items = collectMemoryItems(store, { now: NOW })
+  const journal = items.find((item) => item.id === 'jr_1')
+  assert.equal(journal.kind, 'journal')
+  assert.equal(journal.layer, 'L5')
+  assert.deepEqual(journal.recallChannels, ['R1', 'R5', 'R6', 'R8'])
+
+  const cued = recall({ items, cue: { text: '郑渊洁' }, topK: 5, now: NOW })
+  assert.ok(cued.recalled.some((entry) => entry.id === 'jr_1'))
+  const uncued = recall({ items, cue: {}, topK: 5, now: NOW, rng: () => 0.99 })
+  assert.ok(!uncued.recalled.some((entry) => entry.id === 'jr_1'), 'journal 不靠近因/显著挤进 L0')
+
+  await store.appendRawSegment({
+    id: 'raw_journal_jr_1',
+    kind: 'journal',
+    tsStart: NOW,
+    tsEnd: NOW,
+    payload: { source: 'journal', messages: [{ role: 'journal', ts: NOW, text: '郑渊洁 AI 动画' }] },
+  })
+  await store.markRawSegment('raw_journal_jr_1')
+  await store.appendEpisode({ id: 'ep_j', tsStart: NOW, title: '郑渊洁', summary: 'AI 动画', rawRefs: ['raw_journal_jr_1'] })
+  await store.setFacets('episode', 'ep_j', { who: ['郑渊洁'], what: ['动画'] })
+  const after = collectMemoryItems(store, { now: NOW })
+  assert.ok(!after.some((item) => item.id === 'jr_1'), '已有归一化条目引用该 journal 时不再重复')
+  const kept = after.find((item) => item.id === 'ep_j')
+  assert.ok(kept, '归一化条目接管召回')
+  assert.deepEqual(kept.facets.who, ['郑渊洁'])
 })

@@ -5,7 +5,7 @@
       "id": "bili",
       "name": "B站",
       "package": "dsh-gem-bili",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "搜视频、读字幕与评论、读历史私信、收私信和 @/回复通知；私信与公开评论都过限制层。",
       "capabilities": {
         "text": true,
@@ -19,7 +19,7 @@
       "id": "wechat",
       "name": "微信",
       "package": "dsh-gem-wechat",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "独立 iLink bot，一对一私聊：文本、图片、文件、语音入站；可发送图片与文件。",
       "capabilities": {
         "text": true,

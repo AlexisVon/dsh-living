@@ -1,6 +1,6 @@
 # 部署与验收手册
 
-2026-11-18 · 适用 `dsh-living` v0.1.0 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
+2026-11-19 · 适用 `dsh-living` v0.2.0 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
 
 ## 1. 开发环境（隔离 DSH_HOME）
 
@@ -183,7 +183,7 @@ LIVING_BASE_URL=http://127.0.0.1:3099 LIVING_GEM_TOKEN=<token-wechat> \
 | `uid:<uid>` / 纯数字 | B站私信 |
 | `reply:<oid>:<root>:<parent>` | B站公开回复评论 |
 | `comment:<oid>` / `bvid:<BV...>` | B站视频下发评论 |
-| `me` / `self` / 空 | 微信绑定用户 |
+| `me` / `self` / 空 | 微信绑定用户；B站主人私信（需在 B站配置里填 `ownerUid`） |
 
 公开目标是公网发言，先过 core 的三道闸：规则表（零成本）→ 判决层（子 agent，`limiterEnabled`）→ 白名单。
 

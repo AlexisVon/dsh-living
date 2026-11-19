@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createCoreClient, isCoreUnreachable } from '../lib/channel.mjs'
+import { createCoreClient, dmEvent, isCoreUnreachable, resolveOutboundTarget } from '../lib/channel.mjs'
 
 test('core 客户端：ingest / outbox / ack 的路径与 token', async () => {
   const calls = []
@@ -33,4 +33,21 @@ test('只有连接层错误才算核心不可达', () => {
   assert.equal(isCoreUnreachable(new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } })), true)
   assert.equal(isCoreUnreachable(new Error('core 401')), false)
   assert.equal(isCoreUnreachable(new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } })), false)
+})
+
+test('B站私信：主人回复目标用 me，外部保留 uid', () => {
+  const message = { key: 'k1', text: 'hi', ts: 1 }
+  const owner = dmEvent({ uid: '345', message, ownerUid: '345' })
+  assert.equal(owner.meta.reply_to, 'me')
+  assert.equal(owner.meta.trusted, true)
+
+  const stranger = dmEvent({ uid: '999', message, ownerUid: '345' })
+  assert.equal(stranger.meta.reply_to, 'uid:999')
+  assert.equal(stranger.meta.trusted, false)
+})
+
+test('me 外发目标按 ownerUid 解析', () => {
+  assert.equal(resolveOutboundTarget('me', '345'), 'uid:345')
+  assert.equal(resolveOutboundTarget('me', ''), 'me')
+  assert.equal(resolveOutboundTarget('uid:999', '345'), 'uid:999')
 })

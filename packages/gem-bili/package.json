@@ -1,6 +1,6 @@
 {
   "name": "dsh-gem-bili",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bilibili WorldGem for dsh-living: search, subtitles, comments, private messages and public replies",
   "license": "MIT",
   "repository": {

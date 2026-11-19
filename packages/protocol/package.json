@@ -1,6 +1,6 @@
 {
   "name": "dsh-living-protocol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WorldGem protocol for dsh-living: manifest schema, channel endpoints, failure codes",
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 # dsh-living 技术架构 v1.0
 
-2026-11-17 · 状态：**架构定稿** · v0.1.0 已实现 · 目标：自研 + 发布到 npm 与 DSH 插件市场
+2026-11-17 · 状态：**架构定稿** · v0.2.0 已实现 · 目标：自研 + 发布到 npm 与 DSH 插件市场
 
 > **一句话**：`dsh-living` 是一个模块运行时；它通过 **WorldGem** 接入世界——每颗宝石交出它的能力（MCP）、事件（ingest/outbox）和一份教模型怎么用它的说明（skill）。
 
@@ -15,7 +15,7 @@
 | `dsh-memory` | 0.1.0 | 单文件 SQLite FTS5 记忆库 + 三个工具 + 提示段 | **只借鉴**（该包未随分发提供 LICENSE 文本） |
 | `dsh-life` | 1.0.0 | L1–L6 记忆层（半衰期）+ R1–R8 想起通道 + 惰性衰减 + 再巩固 + `why_recalled` | **只借鉴**（npm 包自带 MIT LICENSE，但无公开仓库；仍按重写处理） |
 | `dsh-anima` | 2.2.3 | 人格/角色 + 工作区两级覆盖 + 带待审缓冲的长期记忆 | **只借鉴**（MIT + 公开仓库） |
-| `dsh-mnemon`（已装） | 0.5.46 | 交互期热记忆注入 | 保持不动，分工不重叠 |
+| `dsh-mnemon`（已移除） | 0.5.46 | 交互期热记忆注入 | 2026-11-19 从宿主卸载；记忆只由 living 管 |
 
 **本插件的不可替代价值只有四块**：时钟、自主循环、感官（浏览器/视频/网页）、人格落地。
 
@@ -135,7 +135,7 @@ clock.tick()                      ← 30/60s，纯代码，0 模型成本
 
 会话生命周期：**同一个活 agent 跨轮复用，直到 rest 或夜睡**；两者都在 `consolidate` 时轮换（`dispose` 旧 agent、归档旧会话、清空 state）。rest 由上下文保险触发，夜睡由 03:30 调度触发。宿主重启后按 `state['session.current']` 恢复同一条对话。超时/中断只 `cancel` 当前 turn，不拆 agent。
 
-主会话标题在创建时固定为 `living-YYYY-MM-DD-上午/下午`（宿主 `sessionTitle.rename`，pinned，自动标题不会覆盖）；轮换后的新会话按创建时间重新取标题。恢复会话时沿用已持久化的标题。
+主会话标题在创建时固定为 `living-YYYY-MM-DD-N`（N 为当天新建会话序号，本地午夜重置；恢复会话不占号；宿主 `sessionTitle.rename`，pinned，自动标题不会覆盖）。轮换后的新会话取下一个序号。
 
 静态段进系统提示词：`living-agent` 在 agent scope 注册 `living:prelude` 系统段（charter/self/journal + 全部宝石 skill + 外部内容边界），**每个会话捕获一次**；每轮 user 消息只带情境、新事件、本轮指令与动态宝石注记。**L0 只在会话首轮注入一次**，后续轮次靠会话上下文保留；睡眠换会话后的首轮重新注入。第二轮起不再重复海量静态注入，前缀缓存落在系统段上。
 
@@ -344,6 +344,10 @@ rest 的 handoff 用同一会话追加一次短模型调用，产物只存 `sess
 - 衰减**惰性计算**（读时现算），不跑定时器、不天天写盘
 - 再巩固：+strength、−fidelity、+version、+rehearsal
 - 每条召回带 `why_recalled`；没有通道命中的记忆不许浮现
+- 候选池只收 `message` / `notice` / `agent_mark` / `import` 与未整理的 journal；`round`、`outbound_decision`、`auto_*` 等运行流水只留在账本
+- journal 先作为 L5 直接召回；夜睡送入独立 raw 整理，归一化条目接管后直接条目让位（避免同一条内容出现两次）
+- 有 cue 时 R3/R4 不得单独让条目浮现；无 cue 的 L0 仍按近因/显著组装
+- journal 是叙事，排序低于归一化的事实/情节（`JOURNAL_SCORE_FACTOR`）
 
 ### 7.5 参数
 
@@ -461,7 +465,7 @@ dsh-gem-bili/
 
 ```json
 {
-  "id": "bili", "name": "B站", "version": "0.1.0",
+  "id": "bili", "name": "B站", "version": "0.2.0",
   "mcp":   { "command": "node", "args": ["mcp/server.js"], "tools": ["bili_search", "bili_subtitle"] },
   "event": { "protocol": ["ingest", "outbox", "ack"], "visibility": "public" },
   "channel": { "command": "node", "args": ["channel/run.mjs"] },
@@ -575,6 +579,8 @@ POST /living/outbox/out_9/ack     { "ok": true, "external_id": "dm_999" }
 - 任何写回/修改记忆的工具
 
 工具组由 preset 组合钉死（D-31、D-48）；web profile 把编码类工具从宿主平面挪进 preset，所以不在组合里的工具（如 `bash`）连注册都不存在。
+
+profile 级 MCP 与其余全局工具不再软屏蔽（D-50，2026-11-19）：工具面由 preset 组合决定，组合外的 shell / subagent / workflow 本就不存在。记忆隔离改为提示词约定——只有 `living_*` 与本库注入的记忆可信，外部记忆不检索、看到只当参考。
 
 ## 11. 失败与降级
 
@@ -691,7 +697,7 @@ L2/L3 的回忆留在 ⑥ 尾部才有意义；L4 是技能，天然属于 ②�
 
 ## 14. 发布
 
-- 版本 `0.1.0` 起，CHANGELOG 按阶段
+- 版本 `0.2.0` 起，CHANGELOG 按阶段
 - README 中英双份，写清**"它不做什么"**
 - 测试 `node --test`：分层、衰减、预算闸、审计白名单、自动网格/σ/期望
 - 冒烟 `selfcheck.mjs`

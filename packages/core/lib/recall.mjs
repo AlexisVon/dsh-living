@@ -37,6 +37,8 @@ const PARTIAL_MAX = 0.34
 const CHAIN_WINDOW_MIN = 30
 const CHAIN_BONUS = 0.12
 const SPONTANEOUS_PROB = 0.5
+// Journal is first-person narrative: recallable, but normalized facts/episodes rank first.
+const JOURNAL_SCORE_FACTOR = 0.65
 
 export function recall({
   items = [],
@@ -86,6 +88,8 @@ export function recall({
       if (sem > R1_MIN) why.push(`R1:cued_by=${cueTokens.find((t) => haystack.toLowerCase().includes(t)) ?? cueTokens[0]}`)
     }
     if (target && String(item.target ?? '') === target) sem = Math.min(1, sem + 0.5)
+    // Recency/salience only shape cue-less L0; a cue must earn its item through a channel.
+    const cueGated = cueTokens.length > 0 && sem <= R1_MIN
 
     if (can('R2') && moodKeys.length && item.affect && Object.keys(item.affect).length) {
       emo = cosine(mood, item.affect)
@@ -95,7 +99,7 @@ export function recall({
       }
     }
 
-    if (can('R3')) {
+    if (can('R3') && !cueGated) {
       rec = recencyScore(item, now)
       if (earliest.get(`${item.source ?? ''}|${item.kind ?? ''}`) === item) {
         rec = Math.min(1, rec + 0.15)
@@ -105,7 +109,7 @@ export function recall({
       }
     }
 
-    if (can('R4')) {
+    if (can('R4') && !cueGated) {
       const importance = Number(item.importance) || 0
       const arousal = Number(item.arousal) || 0
       if (importance >= SALIENCE_GATE || arousal >= AROUSAL_GATE) {
@@ -141,6 +145,7 @@ export function recall({
     // With a clear cue, semantics must dominate; otherwise recency+scene beat relevance.
     if (cueTokens.length) score *= 0.35 + 0.65 * sem
     score *= 0.5 + 0.5 * strength
+    if (item.kind === 'journal') score *= JOURNAL_SCORE_FACTOR
 
     if (can('R8') && allowPartial && cueTokens.length) {
       const overlap = overlapScore(cueTokens, haystack)

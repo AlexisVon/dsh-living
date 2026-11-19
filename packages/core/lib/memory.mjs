@@ -7,9 +7,14 @@ import { recall } from './recall.mjs'
 export const L0_DEFAULT_TOKENS = 3000
 export const COLD_CLUE_MAX = 8
 
+/** Authored-finite event sources that may become memory; operational logs stay in the ledger. */
+export const MEMORY_EVENT_KINDS = Object.freeze(['message', 'notice', 'agent_mark', 'import'])
+
+const JOURNAL_ITEM_LIMIT = 2000
+
 export function collectMemoryItems(store, { now = Date.now(), since = null, limit = 500 } = {}) {
   const items = []
-  for (const event of store.listEvents({ since, limit, order: 'desc' })) {
+  for (const event of store.listEvents({ since, kinds: MEMORY_EVENT_KINDS, limit, order: 'desc' })) {
     const imported = event.kind === 'import' || event.source === 'import'
     const text = event.payload?.text ?? JSON.stringify(event.payload ?? {})
     items.push({
@@ -30,6 +35,7 @@ export function collectMemoryItems(store, { now = Date.now(), since = null, limi
       origin: imported ? 'import' : 'observed',
     })
   }
+  const normalizedJournalRefs = new Set(store.listJournalRawIds())
   for (const episode of store.listEpisodes({ limit, order: 'desc' })) {
     items.push({
       id: episode.id,
@@ -62,6 +68,26 @@ export function collectMemoryItems(store, { now = Date.now(), since = null, limi
       eventRefs: fact.eventIds,
       drivesAction: true,
       origin: 'observed',
+    })
+  }
+  for (const entry of store.listJournalEntries({ limit: JOURNAL_ITEM_LIMIT })) {
+    if (since != null && entry.ts < since) continue
+    if (normalizedJournalRefs.has(entry.id)) continue
+    items.push({
+      id: entry.id,
+      kind: 'journal',
+      layer: 'L5',
+      text: entry.text,
+      ts: entry.ts,
+      lastTs: entry.ts,
+      source: 'journal',
+      confidence: 1,
+      importance: 0.55,
+      facets: { when: [entry.date] },
+      eventRefs: [],
+      drivesAction: true,
+      origin: 'journal',
+      recallChannels: ['R1', 'R5', 'R6', 'R8'],
     })
   }
   return items

@@ -52,7 +52,16 @@ export function createCoreClient({ baseUrl, gem, token, fetchImpl = fetch, timeo
   }
 }
 
+/** Resolve the gem-level "me" alias; an unconfigured owner stays "me" so the send fails loudly. */
+export function resolveOutboundTarget(to, ownerUid) {
+  if (String(to) !== 'me') return String(to)
+  const owner = String(ownerUid ?? '').trim()
+  return owner === '' ? 'me' : `uid:${owner}`
+}
+
 export function dmEvent({ uid, message, gem = 'bili', ownerUid = null }) {
+  const owner = String(ownerUid ?? '').trim()
+  const isOwner = owner !== '' && String(uid) === owner
   // System notices are noise: keep them as silent notices so they never wake a paid round.
   if (message.system === true) {
     return {
@@ -73,9 +82,9 @@ export function dmEvent({ uid, message, gem = 'bili', ownerUid = null }) {
     text: message.text,
     ts: message.ts > 0 && message.ts < 1e12 ? message.ts * 1000 : message.ts,
     meta: {
-      reply_to: `uid:${uid}`,
+      reply_to: isOwner ? 'me' : `uid:${uid}`,
       msg_key: message.key,
-      trusted: String(ownerUid ?? '').trim() !== '' && String(uid) === String(ownerUid),
+      trusted: isOwner,
     },
   }
 }

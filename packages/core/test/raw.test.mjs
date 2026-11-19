@@ -16,6 +16,16 @@ test('raw：从 session 事件提取 user/assistant/tool，跳过 time-context',
   assert.equal(messages[2].name, 'living_state')
 })
 
+test('raw：journal / mark 工具调用不重复进 session raw', () => {
+  const messages = sessionMessages([
+    { type: 'tool/call', time: 1, data: { name: 'living_journal', callId: 'c1', arguments: '{"text":"日记"}' } },
+    { type: 'tool/result', time: 2, data: { toolCallId: 'c1', message: { content: [{ type: 'text', text: '已写入日记' }] } } },
+    { type: 'tool/call', time: 3, data: { name: 'living_mark', callId: 'c2', arguments: '{"text":"标记"}' } },
+    { type: 'tool/call', time: 4, data: { name: 'living_state', callId: 'c3', arguments: '{}' } },
+  ])
+  assert.deepEqual(messages.map((message) => (message.role === 'tool_call' ? message.name : message.role)), ['living_state'])
+})
+
 test('raw：从轮次 prompt 里只取新事件，丢掉 L0/情境/交接', () => {
   const messages = sessionMessages([{
     type: 'user/message',

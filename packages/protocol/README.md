@@ -2,7 +2,7 @@
 
 WorldGem 的契约包。**写一颗宝石只需要依赖这个包**，不需要依赖核心。
 
-**状态**：契约已实现，24 项测试全绿（`node --test test/`）；发布版本 0.1.0。
+**状态**：契约已实现，24 项测试全绿（`node --test test/`）；发布版本 0.2.0。
 
 ## 三件套
 
@@ -22,7 +22,7 @@ skill/       ③ 给模型的知识（SKILL.md：能力边界、礼仪、失败�
 {
   "id": "bili",
   "name": "B站",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "mcp":   { "command": "node", "args": ["mcp/server.js"], "tools": ["bili_search"] },
   "event": { "protocol": ["ingest", "outbox", "ack"], "visibility": "public" },
   "notify": {

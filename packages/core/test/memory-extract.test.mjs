@@ -16,6 +16,8 @@ test('memory-extract：prompt 带 raw id 与固定关系词表', () => {
   assert.match(prompt, /raw_s1/)
   assert.match(prompt, /causes/)
   assert.match(prompt, /只输出 JSON/)
+  assert.match(prompt, /journal 条目/)
+  assert.match(prompt, /元记忆/)
 })
 
 test('memory-extract：解析 episode/fact/边，clamp 置信度', () => {

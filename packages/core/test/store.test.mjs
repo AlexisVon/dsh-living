@@ -66,6 +66,26 @@ test('events 只追加：读取按时间排序、可按区间过滤', async (t) 
   assert.equal(store.listEvents({ kind: 'note', limit: 10 }).length, 2)
 })
 
+test('events：kinds 白名单过滤，kind/kinds 互斥', async (t) => {
+  const { store } = open(t)
+  await store.appendEvent({ id: 'm1', ts: 1, kind: 'message', payload: { text: 'a' } })
+  await store.appendEvent({ id: 'r1', ts: 2, kind: 'round', payload: { text: 'b' } })
+  await store.appendEvent({ id: 'a1', ts: 3, kind: 'agent_mark', payload: { text: 'c' } })
+  assert.deepEqual(store.listEvents({ kinds: ['message', 'agent_mark'], limit: 10 }).map((e) => e.id), ['m1', 'a1'])
+  assert.deepEqual(store.listEvents({ kinds: [], limit: 10 }), [])
+  assert.throws(() => store.listEvents({ kind: 'message', kinds: ['round'], limit: 10 }), RangeError)
+  assert.throws(() => store.listEvents({ kinds: 'message', limit: 10 }), RangeError)
+})
+
+test('journal raw ids：按状态列出已整理的 journal 段', async (t) => {
+  const { store } = open(t)
+  await store.appendRawSegment({ id: 'raw_journal_jr_1', kind: 'journal', tsStart: 1, tsEnd: 1 })
+  await store.appendRawSegment({ id: 'raw_journal_jr_2', kind: 'journal', tsStart: 2, tsEnd: 2 })
+  await store.markRawSegment('raw_journal_jr_2')
+  assert.deepEqual(store.listJournalRawIds().sort(), ['jr_2'])
+  assert.deepEqual(store.listJournalRawIds({ status: 'pending' }), ['jr_1'])
+})
+
 test('事件非法输入大声失败', async (t) => {
   const { store } = open(t)
   await assert.rejects(() => store.appendEvent({ payload: {} }), RangeError)

@@ -1,6 +1,6 @@
 {
   "name": "dsh-gem-wechat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WeChat WorldGem for dsh-living: an independent iLink bot with text ingest and outbox delivery",
   "license": "MIT",
   "repository": {

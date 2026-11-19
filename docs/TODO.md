@@ -1,5 +1,14 @@
 # TODO
 
+## 0.2.0（2026-11-19）
+
+- [x] 召回卫生、journal 记忆源、夜间去重、版本与文档同步
+- [ ] npm 发布 0.2.0（需 2FA；顺序 protocol → gem-bili / gem-wechat / gem-example → dsh-living）
+- [ ] live 宝石库从 npm 0.2.0 重装（当前是 0.1.0 副本 + 手工补丁）
+- [ ] 公开镜像 main + `v0.2.0`
+
+## 0.1.0
+
 发布 0.1.0 前的剩余项：
 
 - [x] 补 `repository` / `homepage` / `bugs` / `author` 元数据（`AlexisVon/dsh-living`）

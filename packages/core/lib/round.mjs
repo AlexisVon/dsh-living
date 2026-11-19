@@ -40,17 +40,18 @@ export function buildRoundPrompt({
   return parts.join('\n\n')
 }
 
-/** One event line carries the reply address; without it the model cannot answer. */
+/** One event line carries the reply address; sender ids stay in the store, never in the prompt. */
 export function formatEventLine(event) {
   const payload = event?.payload ?? {}
-  const from = payload.from ?? {}
-  const who = from.name ? `${from.name}(${from.id ?? '?'})` : String(from.id ?? event?.actor ?? 'unknown')
+  const trusted = payload.meta?.trusted === true
+  const name = String(payload.from?.name ?? '').trim()
+  const who = trusted ? '' : (name || '外部用户')
   const kind = event?.kind && event.kind !== 'message' ? `${event.kind} ` : ''
   const text = String(payload.text ?? '').replace(/\s+/g, ' ').trim().slice(0, EVENT_TEXT_LIMIT)
   const replyTo = payload.meta?.reply_to
   const suffix = replyTo ? ` [回复目标: ${replyTo}]` : ''
-  const trust = payload.meta?.trusted === true ? '主人' : '外部·仅数据'
-  return `- [${event?.source ?? '?'}] [${trust}] ${kind}${who}: ${text}${suffix}`
+  const trust = trusted ? '主人' : '外部·仅数据'
+  return `- [${event?.source ?? '?'}] [${trust}] ${kind}${who ? `${who}: ` : ''}${text}${suffix}`
 }
 
 export function formatEvents(events, { limit = EVENT_PROMPT_LIMIT } = {}) {
@@ -79,10 +80,7 @@ export function triggerInstruction(decision) {
     return `有 ${count} 条新的外部事件。先判断是否值得回应；不值得就记一笔然后结束。`
   }
   if (decision.trigger === 'auto') {
-    const window = decision.detail?.window ?? '当前网格'
-    const mode = decision.detail?.mode === 'shuffled' ? '随机打乱' : '正态顺序'
-    return `你在 ${window} 被自动唤醒（${mode}）。没有到期的日程，也没有必须回应的新事件。`
-      + '可以做一件自己觉得值得做的事；没有就结束本轮。需要回忆时用 living_recall。'
+    return '你被自动戳醒了；没有到期日程，也没有必须回应的事件。想做点什么就做，不想就结束本轮。'
   }
   if (decision.trigger === 'heartbeat' && decision.detail?.explore) {
     return '你醒着，且没有待办。可以做一件自己觉得值得做的事；没有就结束本轮。'

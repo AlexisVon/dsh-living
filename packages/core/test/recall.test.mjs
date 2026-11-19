@@ -110,6 +110,28 @@ test('有明确线索时语义占主导，近期无关事件不能压过', () =>
   const recentNoise = item({ id: 'noise', text: '今天天气很好', ts: NOW - MIN, importance: 0.2 })
   const r = recall({ items: [recentNoise, relevant], cue: { text: '散热' }, channels: ['R1', 'R3'], now: NOW })
   assert.equal(r.recalled[0].id, 'rel')
+  assert.deepEqual(r.recalled.map((entry) => entry.id), ['rel'], '零语义的近因条目不应浮现')
+})
+
+test('有线索时零语义的显著条目不得插队', () => {
+  const relevant = item({ id: 'rel', text: '显卡散热坏了' })
+  const salientNoise = item({ id: 'salient', text: '被当众羞辱', importance: 0.95, ts: NOW - MIN })
+  const r = recall({ items: [salientNoise, relevant], cue: { text: '散热' }, now: NOW })
+  assert.deepEqual(r.recalled.map((entry) => entry.id), ['rel'])
+})
+
+test('journal 原文排在归一化记忆之后', () => {
+  const fact = item({ id: 'fact', kind: 'fact', text: '散热坏了', source: 'fact', confidence: 0.8 })
+  const journal = item({
+    id: 'journal',
+    kind: 'journal',
+    text: '散热坏了',
+    source: 'journal',
+    confidence: 1,
+    recallChannels: ['R1'],
+  })
+  const r = recall({ items: [journal, fact], cue: { text: '散热' }, channels: ['R1'], now: NOW })
+  assert.equal(r.recalled[0].id, 'fact')
 })
 
 test('topK 限制正式回忆条数；why 永不为空', () => {

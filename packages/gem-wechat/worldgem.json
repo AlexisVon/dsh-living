@@ -1,7 +1,7 @@
 {
   "id": "wechat",
   "name": "微信",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "微信私聊：独立 iLink bot，文本、图片、文件、语音入站；可发送图片与文件",
   "event": {
     "protocol": ["ingest", "outbox", "ack"],

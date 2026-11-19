@@ -53,6 +53,7 @@ function promptEvents(text) {
 /** Session events → compact message records. Unknown event types are ignored. */
 export function sessionMessages(events) {
   const messages = []
+  const skippedCalls = new Set()
   for (const event of events ?? []) {
     const ts = Number(event?.time ?? event?.createdAt ?? 0)
     const data = event?.data ?? {}
@@ -72,8 +73,16 @@ export function sessionMessages(events) {
       const reasoning = reasoningBlocks(data?.message?.content)
       if (text || reasoning) messages.push({ role: 'assistant', ts, text, ...(reasoning ? { reasoning } : {}) })
     } else if (event?.type === 'tool/call') {
-      messages.push({ role: 'tool_call', ts, name: String(data?.name ?? 'tool'), text: String(data?.arguments ?? '') })
+      const name = String(data?.name ?? 'tool')
+      const callId = String(data?.callId ?? '')
+      if (name === 'living_journal' || name === 'living_mark') {
+        if (callId) skippedCalls.add(callId)
+        continue
+      }
+      messages.push({ role: 'tool_call', ts, name, text: String(data?.arguments ?? '') })
     } else if (event?.type === 'tool/result') {
+      const callId = String(data?.callId ?? data?.toolCallId ?? data?.message?.source?.callId ?? '')
+      if (skippedCalls.has(callId)) continue
       messages.push({
         role: 'tool_result',
         ts,

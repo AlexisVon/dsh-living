@@ -57,7 +57,7 @@ test('Connection 信封：rpcId 回显、endpoint 解包', async (t) => {
 test('state / rounds / memory / stats 走同一通道', async (t) => {
   const { store, handle } = await setup(t)
   await store.appendAnchor({ roundId: 'r1', startedAt: NOW, trigger: 'event', outcome: 'ok' })
-  await store.appendEvent({ id: 'e1', ts: NOW, kind: 'note', source: 'bili', payload: { text: '显卡散热坏了' } })
+  await store.appendEvent({ id: 'e1', ts: NOW, kind: 'message', source: 'bili', payload: { text: '显卡散热坏了' } })
 
   const state = await handle('state', {})
   assert.equal(state.ok, true)

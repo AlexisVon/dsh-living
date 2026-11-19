@@ -57,3 +57,11 @@ raw → normalized → edge 需要同一事务、同一备份、同一写队列�
 - rest 后有 pending raw；夜睡后 processed 且生成 items/edges。
 - 模型失败 3 次后 fallback，raw 仍标记 processed。
 - `living_recall` 能通过边带回邻居条目。
+
+## 7. 召回卫生与 journal（2026-11-19）
+
+- 候选池白名单：`message` / `notice` / `agent_mark` / `import`；`round`、`outbound_decision`、`auto_*`、预算/整合事件不进记忆池。L0 的 cue 也只从白名单事件取，审计 JSON 不再成为查询线索。
+- journal 是 L5 直接召回条目，只走 R1/R5/R6/R8；有 cue 时归一化的事实/情节排在 journal 前。
+- 夜睡把上一整理窗口内的 journal 写成独立 raw（`raw_journal_<entry id>`），模型整理成 episode/fact；归一化条目引用该 raw 后，直接 journal 条目让位，避免同一条内容出现两次。
+- 记忆整理提示词明确禁止元记忆（整合时间、items/edges 数、自检线索、预算、网格）与工具审计 JSON。
+- 有 cue 时 R3/R4 不能单独让条目浮现；无 cue 的 L0 不变。

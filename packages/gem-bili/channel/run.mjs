@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { fetchDmMessages, getMsgfeed, listDmSessions, sendOutbound } from '../lib/api.mjs'
-import { createCoreClient, dmEvent, failureCodeFor, isCoreUnreachable, noticeEvent } from '../lib/channel.mjs'
+import { createCoreClient, dmEvent, failureCodeFor, isCoreUnreachable, noticeEvent, resolveOutboundTarget } from '../lib/channel.mjs'
 import { gemHome, loadConfig, loadCredential, loadState, saveState } from '../lib/config.mjs'
 import { createProactiveLimit } from '../lib/limits.mjs'
 
@@ -145,11 +145,12 @@ async function pollOutbox() {
         log(`拒绝主动外发 ${item.id}：今日主动额度已用尽`)
         continue
       }
-      await waitForSendSlot(item.to)
-      const result = await sendOutbound(item.to, item.text, { cred })
+      const to = resolveOutboundTarget(item.to, config.ownerUid)
+      await waitForSendSlot(to)
+      const result = await sendOutbound(to, item.text, { cred })
       proactive.noteSent(item)
       await core.ack(item.id, { ok: true, external_id: result.externalId, quota: quotaReport() })
-      log(`已发送 ${item.id} -> ${item.to}`)
+      log(`已发送 ${item.id} -> ${to}`)
     } catch (error) {
       const code = failureCodeFor(error)
       log(`发送失败 ${item.id} -> ${item.to}: ${error.message}（${code}）`)

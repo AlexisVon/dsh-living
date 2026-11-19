@@ -20,11 +20,10 @@ import { createGemLoginSupervisor } from './lib/gem-login.mjs'
 import { createGemChannelSupervisor } from './lib/gem-channel.mjs'
 import { waitForTurn } from './lib/round.mjs'
 import { findScope } from './lib/host-scope.mjs'
-import { DEFAULT_DENY_RULES, parseDenyRules, softBanNotice } from './lib/toolscope.mjs'
 import { createAdjudicator } from './lib/adjudicator.mjs'
 import { createPersonaEvolver, SELF_PRESET_PLUGINS } from './lib/persona-evolve.mjs'
 import { createMemoryExtractor, MEMORY_PRESET_PLUGINS } from './lib/memory-extract.mjs'
-import { livingSessionTitle } from './lib/session-title.mjs'
+import { allocateLivingSessionTitle } from './lib/session-title.mjs'
 import { LIMITER_PRESET_PLUGINS } from './lib/limiter.mjs'
 import { autoWakeEstimate, scaledNow } from './lib/clock.mjs'
 import { ADMIN_CHANNEL, ADMIN_ENDPOINT, createAdminFetch } from './lib/rpc.mjs'
@@ -60,8 +59,6 @@ export const Config = z.object({
   presetId: z.string().default('living').extra('volatile', true),
   limiterEnabled: z.boolean().default(true).extra('volatile', true),
   gemSilenceMinutes: z.number().default(10).extra('volatile', true),
-  /** 自主轮屏蔽的工具规则（"前缀*" 或精确名），见 lib/toolscope.mjs */
-  toolDenyJson: z.string().default(JSON.stringify(DEFAULT_DENY_RULES)).extra('volatile', true),
   gemDirs: z.array(z.string()).default([]).extra('volatile', true),
   gemHomesJson: z.string().default('{}').extra('volatile', true),
   gemTokensJson: z.string().default('{}').role('secret').extra('volatile', true),
@@ -82,7 +79,6 @@ export async function apply(ctx, config) {
 
   const gemTokens = parseJsonObject(cfg.gemTokensJson, 'gemTokensJson')
   const whitelist = parseJsonArray(cfg.whitelistJson, 'whitelistJson')
-  const toolDenyRules = parseDenyRules(parseJsonArray(cfg.toolDenyJson, 'toolDenyJson'))
   const gemCatalog = loadGemCatalog()
   const storeScan = scanStoreGems(gemStoreDir)
   for (const error of storeScan.errors) console.warn(`living: 宝石清单无效 ${error.dir}: ${error.message}`)
@@ -189,8 +185,11 @@ export async function apply(ctx, config) {
     workspace,
     presetId: cfg.presetId,
     roundTokens: cfg.roundTokens,
-    toolDenyRules,
-    sessionTitle: () => livingSessionTitle(Date.now()),
+    sessionTitle: async () => {
+      const allocated = allocateLivingSessionTitle(Date.now(), { previous: store.getState('session.titleSeq') })
+      await store.setState('session.titleSeq', allocated.state)
+      return allocated.title
+    },
     logger: console,
   })
   ctx.effect(() => () => session.close())
@@ -393,7 +392,6 @@ function normalizeConfig(config) {
     presetId: value(config.presetId, 'living'),
     limiterEnabled: value(config.limiterEnabled, true),
     gemSilenceMinutes: value(config.gemSilenceMinutes, 10),
-    toolDenyJson: value(config.toolDenyJson, JSON.stringify(DEFAULT_DENY_RULES)),
     gemDirs: value(config.gemDirs, []),
     gemHomesJson: value(config.gemHomesJson, '{}'),
     gemTokensJson: value(config.gemTokensJson, '{}'),
@@ -409,7 +407,7 @@ function normalizeConfig(config) {
  * archived the host's pre-step gate refuses turns, so unarchive always precedes
  * a round.
  */
-export function createSessionRunner(ctx, { store, home, workspace = home, presetId, roundTokens, toolDenyRules = [], sessionTitle = null, logger = console }) {
+export function createSessionRunner(ctx, { store, home, workspace = home, presetId, roundTokens, sessionTitle = null, logger = console }) {
   let handle = null
   let sessionId = null
   let startedAt = null
@@ -527,7 +525,7 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
     }
     sessionId = id
     startedAt = started
-    applySessionTitle(handle.agent, typeof sessionTitle === 'function' ? sessionTitle() : null)
+    applySessionTitle(handle.agent, typeof sessionTitle === 'function' ? await sessionTitle() : null)
     await store.setState('session.current', { id, startedAt })
     logger.log?.(`living: 主会话已创建 ${id}${currentTitle ? `（${currentTitle}）` : ''}`)
     return handle.agent
@@ -631,7 +629,6 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
     try {
       const agent = await ensureAgent(signal)
       if (!isVisible()) await setArchived(sessionId, false)
-      const softBan = softBanNotice(toolDenyRules)
       // The signal only rejects waitForTurn; the live agent must be cancelled
       // explicitly, unlike the per-round handle that dispose() used to stop.
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('round_aborted')
@@ -646,7 +643,7 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
         agent.followup({
           id: randomUUID(),
           role: 'user',
-          content: [{ type: 'text', text: softBan ? `${prompt}\n\n${softBan}` : prompt }],
+          content: [{ type: 'text', text: prompt }],
           source: { kind: 'user' },
         })
         const result = await done

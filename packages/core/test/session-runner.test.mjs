@@ -116,7 +116,7 @@ function createHost({ autoEnd = true } = {}) {
   return { ctx, store, known, archive, agents, created, resumed, disposed, titles, get cancelled() { return cancelled } }
 }
 
-function makeRunner(host, { title = 'living-2026-11-18-上午' } = {}) {
+function makeRunner(host, { title = 'living-2026-11-18-1' } = {}) {
   return createSessionRunner(host.ctx, {
     store: host.store,
     home: '/tmp/living-session-test',
@@ -146,7 +146,37 @@ test('会话标题：创建时设置', async () => {
   const host = createHost()
   const runner = makeRunner(host)
   await runner.run({ prompt: 'a' })
-  assert.deepEqual(host.titles, ['living-2026-11-18-上午'])
+  assert.deepEqual(host.titles, ['living-2026-11-18-1'])
+})
+
+test('会话标题：每个新会话分配一次，恢复不占号', async () => {
+  const host = createHost()
+  let seq = 0
+  const options = {
+    store: host.store,
+    home: '/tmp/living-session-test',
+    presetId: 'living',
+    roundTokens: 1000,
+    sessionTitle: async () => {
+      seq += 1
+      await new Promise((resolve) => setImmediate(resolve))
+      return `living-2026-11-19-${seq}`
+    },
+    logger: silent,
+  }
+
+  const runner = createSessionRunner(host.ctx, options)
+  await runner.run({ prompt: 'a' })
+  await runner.run({ prompt: 'b' })
+  await runner.rotate('night')
+  await runner.run({ prompt: 'c' })
+  await runner.close()
+
+  const resumedRunner = createSessionRunner(host.ctx, options)
+  await resumedRunner.run({ prompt: 'd' })
+  await resumedRunner.close()
+
+  assert.deepEqual(host.titles, ['living-2026-11-19-1', 'living-2026-11-19-2'])
 })
 
 test('侧栏可见性即时切换，不换会话', async () => {

@@ -48,9 +48,6 @@ dsh plugin --profile web add /path/to/dsh-living/packages/core
       - /path/to/gem-wechat
       - /path/to/gem-bili
     gemHomesJson: '{}'
-    # 自主轮屏蔽的工具：后缀 * 是前缀匹配，否则精确匹配。允许侧不开放配置
-    # （living_* 与已配置宝石的 MCP），其余一律屏蔽 —— 不靠提示词嘱咐。
-    toolDenyJson: '["mnemon_*","mcp__codebase__*","working_directory","list_mcp_resources","list_mcp_resource_templates","read_mcp_resource","sidebar_open"]'
     gemTokensJson: '{"wechat":"<32hex>","bili":"<32hex>"}'
     whitelistJson: '[]'
     sessionRoot: !!js dshHomePath('sessions')
@@ -140,27 +137,13 @@ dsh-gem-bili MCP ready
 
 ## 4. 门禁项（拦住 alpha → beta）
 
-### G-1（已缓解，软屏蔽）工具面泄漏：全局注册的工具仍会进轮次
+### G-1（已关闭，2026-11-19）工具面泄漏：全局注册的工具仍会进轮次
 
-处置按 R9/R10 结论：**`toolDenyJson` 只写进轮次提示（软屏蔽），不做结构收口**。日志里的"未登记工具"告警保留，用于发现新增泄漏，但不进提示词。
+`toolDenyJson` 软屏蔽已整体移除；`mnemon` 已从宿主卸载。记忆独占改由提示词约定维持：只有 `living_*` 与本库注入的记忆可信，外部记忆不检索、看到只当参考数据。
 
-宿主实况（自主轮可见工具 **27 个**，其中 10 个是漏进来的）：
+工具面由 preset 组合决定：`bash` / `subagent` / `workflow` 不在组合里，连注册都不存在；profile 级 MCP（codebase / alxrun）与宝石 MCP 现在允许使用。宿主实况里失去的只是每轮那一段软屏蔽文案。
 
-```
-mcp__alxrun__run              ← 任意代码执行
-mcp__alxrun__capabilities
-mcp__bili__bili_search        ← B站（绕过宝石协议，但本身无害）
-mcp__bili__bili_video / bili_user / bili_owner / bili_subtitle /
-mcp__bili__bili_comments / bili_dynamics
-mnemon_subagent_result        ← 违反 D-05「记忆独占」
-mnemon_view_route / mnemon_view_action
-list_mcp_resources / list_mcp_resource_templates / read_mcp_resource
-working_directory
-```
-
-**结论**：当时 `agents.create` 只传了 `meta.agentPreset`，preset 组合从未绑到 agent scope，所以模型看不到 `living_*`（R10 P1）。修法是在 `setup` 里 `agentPresets.mount(agentCtx, id)`；S1 探针已同步修正。preset 隔离的是「组合」，全局工具仍要靠软屏蔽约束。
-
-**为什么不走结构收口**：当 preset 组合没有真正绑到 agent scope 时，`restrict()` 的可见集里只有全局工具、看不到 preset 注册的 `living_*`；一收口就把自家通道也摘掉（R10 P6）。R10 P1 已修正挂载方式，但结构收口是否重新启用另行评估，当前保持软屏蔽。
+历史：R9/R10 阶段曾用 `toolDenyJson` 把 `mnemon_*`、`mcp__codebase__*` 等写进轮次提示，起因是 `agents.create` 只传 `meta.agentPreset`、preset 组合没有绑到 agent scope（R10 P1）。挂载方式修正后，结构收口仍会误伤 preset 注册的 `living_*`（R10 P6），于是当时选了软屏蔽。mnemon 卸载后这道约束的最后理由消失，D-50 撤销。
 
 ### G-2（已解决）宝石的 channel runner 由核心拉起
 

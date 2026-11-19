@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { createStore } from '../lib/store.mjs'
 import { createRuntime, RUNTIME_STATUS } from '../lib/runtime.mjs'
+import { collectMemoryItems } from '../lib/memory.mjs'
 import { createClockState } from '../lib/clock.mjs'
 import { gemNotifyPolicies } from '../lib/gems.mjs'
 
@@ -174,7 +175,7 @@ test('事件醒：处理后游标前移，同一事件不重复起轮', async (t
   })
   const ingested = await rt.channel.ingest({
     token: 't-bili',
-    payload: { gem: 'bili', kind: 'message', external_id: 'dm_1', from: { id: 'u1' }, text: '在吗', ts: NOW },
+    payload: { gem: 'bili', kind: 'message', external_id: 'dm_1', from: { id: 'u1' }, text: '在吗', ts: NOW, meta: { reply_to: 'uid:u1' } },
     nowMs: NOW,
   })
   assert.equal(ingested.accepted, true)
@@ -183,7 +184,7 @@ test('事件醒：处理后游标前移，同一事件不重复起轮', async (t
   assert.equal(first.decision.trigger, 'event')
   assert.equal(calls.length, 1)
   assert.ok(calls[0].includes('在吗'), '事件正文必须进当轮 prompt')
-  assert.ok(calls[0].includes('u1'), '发送者 id 必须进 prompt，模型才有回复地址')
+  assert.ok(calls[0].includes('回复目标: uid:u1'), '回复地址必须进 prompt')
 
   clock.now = NOW + 1
   const second = await rt.tick()
@@ -393,13 +394,13 @@ test('宝石级降级：本轮注记不可用，skill 留在静态前缀，冷�
 
 test('rest 生成情节；夜睡产生降维候选', async (t) => {
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }) })
-  await store.appendEvent({ id: 'e1', ts: NOW - 3 * HOUR, kind: 'note', payload: { text: '早上修显卡' } })
-  await store.appendEvent({ id: 'e2', ts: NOW - 2 * HOUR, kind: 'note', payload: { text: '换了风扇' } })
+  await store.appendEvent({ id: 'e1', ts: NOW - 3 * HOUR, kind: 'message', payload: { text: '早上修显卡' } })
+  await store.appendEvent({ id: 'e2', ts: NOW - 2 * HOUR, kind: 'message', payload: { text: '换了风扇' } })
   const rest = await rt.consolidate('rest')
   assert.ok(rest.episodes >= 1)
   assert.ok(store.listEpisodes({ limit: 10 }).length >= 1)
 
-  await store.appendEvent({ id: 'old', ts: NOW - 1000 * DAY, kind: 'note', payload: { text: '显卡散热坏了' } })
+  await store.appendEvent({ id: 'old', ts: NOW - 1000 * DAY, kind: 'message', payload: { text: '显卡散热坏了' } })
   const night = await rt.sleep('night')
   assert.ok(night.demotions >= 1)
   assert.ok(store.listCold({ limit: 10 }).length >= 1)
@@ -536,7 +537,7 @@ test('夜睡：pending raw 整理成 memory_items + facets + edges', async (t) =
     }
   }
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory })
-  await store.appendEvent({ id: 'e-memory', ts: NOW - 1000, kind: 'note', payload: { text: '修显卡换风扇' } })
+  await store.appendEvent({ id: 'e-memory', ts: NOW - 1000, kind: 'message', payload: { text: '修显卡换风扇' } })
   const result = await rt.consolidate('night')
   assert.equal(result.memoryItems, 2)
   assert.equal(result.memoryEdges, 1)
@@ -552,9 +553,43 @@ test('夜睡：pending raw 整理成 memory_items + facets + edges', async (t) =
   assert.equal(edges[0].otherKind, 'fact')
 })
 
+test('夜睡：journal 独立 raw，整理后直接条目不再重复', async (t) => {
+  const seen = []
+  const extractMemory = async ({ segments }) => {
+    seen.push(segments.map((segment) => segment.id))
+    const rawRef = segments[0].id
+    return {
+      ok: true,
+      tokens: 1,
+      items: [{
+        kind: 'episode',
+        title: '日记',
+        description: '读了郑渊洁的 AI 动画新闻',
+        importance: 0.6,
+        confidence: 0.9,
+        tsStart: NOW,
+        tsEnd: NOW,
+        rawRef,
+        facets: {},
+      }],
+      edges: [],
+    }
+  }
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory })
+  await store.appendJournalEntry({ id: 'jr_n1', date: '2026-11-17', ts: NOW - 1000, text: '今天读了郑渊洁的 AI 动画新闻' })
+  assert.ok(collectMemoryItems(store, { now: NOW }).some((item) => item.id === 'jr_n1'))
+
+  await rt.consolidate('night')
+  assert.ok(store.listRawSegments({ status: 'processed', limit: 100 }).some((segment) => segment.id === 'raw_journal_jr_n1'))
+  assert.ok(seen.flat().includes('raw_journal_jr_n1'))
+  const after = collectMemoryItems(store, { now: NOW })
+  assert.ok(!after.some((item) => item.id === 'jr_n1'), '整理后直接 journal 条目让位')
+  assert.ok(after.some((item) => item.id.includes('raw_journal_jr_n1')), '归一化条目接管召回')
+})
+
 test('夜睡：没有整理器时退化为 raw episode，仍标记 processed', async (t) => {
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }) })
-  await store.appendEvent({ id: 'e-fallback', ts: NOW - 1000, kind: 'note', payload: { text: '今天在修显卡' } })
+  await store.appendEvent({ id: 'e-fallback', ts: NOW - 1000, kind: 'message', payload: { text: '今天在修显卡' } })
   const result = await rt.consolidate('night')
   assert.equal(result.memoryItems, 1)
   const [raw] = store.listRawSegments({ status: 'processed' })
@@ -566,7 +601,7 @@ test('夜睡：没有整理器时退化为 raw episode，仍标记 processed', a
 test('夜睡：模型整理失败先保留 pending，第三次 fallback', async (t) => {
   const extractMemory = async () => ({ ok: false, tokens: 1, error: 'bad json' })
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory })
-  await store.appendEvent({ id: 'e-retry', ts: NOW - 1000, kind: 'note', payload: { text: '反复失败的事' } })
+  await store.appendEvent({ id: 'e-retry', ts: NOW - 1000, kind: 'message', payload: { text: '反复失败的事' } })
   await rt.consolidate('night')
   assert.equal(store.listRawSegments({ status: 'pending' })[0].attempts, 1)
   await rt.consolidate('night')
@@ -580,7 +615,7 @@ test('夜睡：模型整理失败先保留 pending，第三次 fallback', async 
 
 test('rest：只采集 raw，不做整理', async (t) => {
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }) })
-  await store.appendEvent({ id: 'e-rest', ts: NOW - 1000, kind: 'note', payload: { text: '白天的事' } })
+  await store.appendEvent({ id: 'e-rest', ts: NOW - 1000, kind: 'message', payload: { text: '白天的事' } })
   const result = await rt.consolidate('rest')
   assert.equal(result.memoryItems, 0)
   const [raw] = store.listRawSegments({ status: 'pending' })
@@ -842,7 +877,7 @@ test('L0 只在会话开头注入；同一会话后续轮次不再重复', async
   const clock = { now: NOW }
   const { rt, store } = await setup(t, { runner, clock })
   await store.appendEvent({
-    kind: 'note',
+    kind: 'message',
     ts: NOW - 1000,
     payload: { text: '主人喜欢把散热器调到最大', importance: 1 },
   })
@@ -892,7 +927,7 @@ test('换会话后重新注入一次 L0', async (t) => {
   const clock = { now: NOW }
   const { rt, store } = await setup(t, { runner, clock, rotateSession: async () => {} })
   await store.appendEvent({
-    kind: 'note',
+    kind: 'message',
     ts: NOW - 1000,
     payload: { text: '主人喜欢把散热器调到最大', importance: 1 },
   })
@@ -1355,7 +1390,7 @@ test('重置今日用量：计数归零、解除 BUDGET_HOLD、写审计事件',
 
 test('服务接口：recall / import 幂等 / stats', async (t) => {
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }) })
-  await store.appendEvent({ id: 'e1', ts: NOW, kind: 'note', payload: { text: '显卡散热坏了' }, source: 'bili' })
+  await store.appendEvent({ id: 'e1', ts: NOW, kind: 'message', payload: { text: '显卡散热坏了' }, source: 'bili' })
   const recalled = rt.service().recall('散热')
   assert.equal(recalled.recalled[0].id, 'e1')
   assert.ok(recalled.recalled[0].why.length > 0)

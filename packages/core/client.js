@@ -1035,7 +1035,6 @@ window.__ModuleLoader__.load({
           ['limiterEnabled', '公开发言判决层', 'boolean', '', '关闭后公网发言将保持待审'],
           ['gemSilenceMinutes', '宝石静默判定', 'number', '分钟', '待发消息多久没被认领就判静默'],
           ['whitelistJson', '外发白名单', 'list', '', '直接放行的目标（uid / reply / 群）'],
-          ['toolDenyJson', '自主轮禁用工具', 'list', '', '后缀 * 为前缀匹配；只写进轮次提示'],
         ],
       },
     ]
@@ -1226,8 +1225,7 @@ window.__ModuleLoader__.load({
           return h(Field, { key: name, label, help },
             h(ListValue, {
               value: list,
-              mono: name === 'toolDenyJson',
-              placeholder: name === 'whitelistJson' ? 'uid:123 / reply:... / 群目标' : 'mnemon_* / working_directory',
+              placeholder: 'uid:123 / reply:... / 群目标',
               onChange: (next) => save(name, JSON.stringify(next)),
             }))
         }

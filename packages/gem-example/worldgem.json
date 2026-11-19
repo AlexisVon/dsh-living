@@ -1,7 +1,7 @@
 {
   "id": "example",
   "name": "示例宝石",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "把三件套摆齐的空壳：能力 + 事件 + skill",
   "mcp": {
     "command": "node",

@@ -1,7 +1,7 @@
 {
   "id": "bili",
   "name": "B站",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "B站：搜视频、读字幕与评论、读历史私信、收私信和 @/回复通知；私信与公开评论都发出站审计闸",
   "mcp": {
     "command": "node",

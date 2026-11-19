@@ -50,8 +50,9 @@ export function createStore({ path, now = Date.now } = {}) {
       return row ? mapEvent(row) : null
     },
 
-    listEvents({ since = null, until = null, kind = null, limit = 100, order = 'asc' } = {}) {
+    listEvents({ since = null, until = null, kind = null, kinds = null, limit = 100, order = 'asc' } = {}) {
       if (order !== 'asc' && order !== 'desc') throw new RangeError(`events.order 只能是 asc/desc: ${order}`)
+      if (kind && kinds) throw new RangeError('events.kind 与 events.kinds 只能二选一')
       const where = []
       const params = []
       if (Number.isFinite(since)) {
@@ -66,7 +67,15 @@ export function createStore({ path, now = Date.now } = {}) {
         where.push('kind = ?')
         params.push(kind)
       }
-      params.push(assertLimit(limit))
+      const limitValue = assertLimit(limit)
+      const selectedKinds = kinds ? (Array.isArray(kinds) ? kinds.map(String) : null) : null
+      if (kinds && selectedKinds === null) throw new RangeError('events.kinds 必须是数组')
+      if (selectedKinds?.length === 0) return []
+      if (selectedKinds) {
+        where.push(`kind IN (${selectedKinds.map(() => '?').join(',')})`)
+        params.push(...selectedKinds)
+      }
+      params.push(limitValue)
       const direction = order === 'desc' ? 'DESC' : 'ASC'
       const sql = `SELECT * FROM events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ts ${direction} LIMIT ?`
       const rows = db.prepare(sql).all(...params).map(mapEvent)
@@ -271,6 +280,11 @@ export function createStore({ path, now = Date.now } = {}) {
     countRawSegments({ status = null } = {}) {
       if (status) return db.prepare('SELECT COUNT(*) AS n FROM raw_segments WHERE status = ?').get(status).n
       return db.prepare('SELECT COUNT(*) AS n FROM raw_segments').get().n
+    },
+
+    listJournalRawIds({ status = 'processed' } = {}) {
+      const rows = db.prepare("SELECT id FROM raw_segments WHERE kind = 'journal' AND status = ?").all(status)
+      return rows.map((row) => String(row.id).replace(/^raw_journal_/, ''))
     },
 
     listRawSegments({ status = null, limit = 50 } = {}) {
