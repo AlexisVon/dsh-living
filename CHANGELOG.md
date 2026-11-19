@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.6 — 2026-11-19
+
+- 白名单改为单级：任何 visibility 命中白名单都直接发，规则表与限制层都跳过。
+- 非白名单仍走合规审核：规则表；public/group 再过限制层；通过即发，拒绝/异常/缺席直接拦截，无人工待审。
+- 测试：core 329。
+
+## 0.3.5 — 2026-11-19
+
+- 外发取消人工待审：规则表 + 限制层 + 预算即最终闸门，不再产生新的 `review` 记录。
+- private 非白名单目标：规则表通过即发；public/group：限制层 pass 即发。
+- 限制层拒绝/异常/缺席 → 直接拦截，不排队等人工；`living_send` 与配置文案同步。
+- 测试：core 328。
+
 ## 0.3.4 — 2026-11-19
 
 - 向量库身份改为模型签名：`embed.index` 记录 `{model, digest, signature, url, dim}`，`memory_vectors.model` 存签名（digest；没有 digest 时 `模型名@URL`）；同名模型重新 pull 导致 digest 变化时，旧向量失效并重建。

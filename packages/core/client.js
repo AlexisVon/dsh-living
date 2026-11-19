@@ -1094,7 +1094,7 @@ window.__ModuleLoader__.load({
       {
         title: '外发与工具',
         fields: [
-          ['limiterEnabled', '公开发言判决层', 'boolean', '', '关闭后公网发言将保持待审'],
+          ['limiterEnabled', '公开发言判决层', 'boolean', '', '关闭后公网发言会被拦截'],
           ['gemSilenceMinutes', '宝石静默判定', 'number', '分钟', '待发消息多久没被认领就判静默'],
           ['whitelistJson', '外发白名单', 'list', '', '直接放行的目标（uid / reply / 群）'],
         ],

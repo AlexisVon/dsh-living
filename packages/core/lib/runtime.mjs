@@ -1339,7 +1339,7 @@ export function createRuntime({
         try {
           verdict = await adjudicate({ gem, target: to, text: body, visibility })
         } catch (error) {
-          logger.warn?.(`living: 限制层调用失败，按待审处理: ${error.message}`)
+          logger.warn?.(`living: 限制层调用失败，按拦截处理: ${error.message}`)
         }
         limiterVerdict = verdict ? (verdict.pass === true ? 'pass' : 'block') : 'missing'
         decision = gate(verdict)

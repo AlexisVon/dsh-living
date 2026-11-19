@@ -427,7 +427,7 @@ consolidate(kind)
 - **上下文保险看最后一次模型调用的 input + cacheRead + output**，不是整轮累加；超限写 `context_guard`，先 handoff 再 rest + 换会话，不锁天；只有日预算耗尽才进 `BUDGET_HOLD`
 - 推送轮的预算由宝石清单 `notify.budget` 决定：`limit:false` 绕过日闸和上下文保险，`count:false` 不计 token/轮次
 - 设置页提供"重置今日用量"：清当日计数、解除 `BUDGET_HOLD`、写 `budget_reset` 审计事件；不删历史与待处理事件
-- 外发：私聊 + 白名单 → 规则表也跳过、静默直发；其余 → 规则表 → 待审/进 outbox
+- 外发：白名单私聊 → 规则表也跳过、静默直发；其余 → 规则表（public/group 再过限制层）→ 放行或拦截，无人工待审
 - **公开可见的发声强制过限制层**（§9 `visibility: public|group`）
 - 内容注入：外部内容包成 `untrusted` 段；**影响"知道什么"，不影响"能做什么"**
 

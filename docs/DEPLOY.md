@@ -1,6 +1,6 @@
 # 部署与验收手册
 
-2026-11-19 · 适用 `dsh-living` v0.3.4 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
+2026-11-19 · 适用 `dsh-living` v0.3.6 · DSH 0.2.2-rc.1 · Node >= 24.9（DSH 自身要求）
 
 ## 1. 开发环境（隔离 DSH_HOME）
 
@@ -193,14 +193,13 @@ LIVING_BASE_URL=http://127.0.0.1:3099 LIVING_GEM_TOKEN=<token-wechat> \
 | `comment:<oid>` / `bvid:<BV...>` | B站视频下发评论 |
 | `me` / `self` / 空 | 微信绑定用户；B站主人私信（需在 B站配置里填 `ownerUid`） |
 
-公开目标是公网发言，先过 core 的三道闸：规则表（零成本）→ 判决层（子 agent，`limiterEnabled`）→ 白名单。
+公开目标是公网发言，过 core 的两道闸：规则表（零成本）→ 判决层（子 agent，`limiterEnabled`）；通过即发，不再人工待审。
 
-- 判决层通过但目标不在白名单 → 挂起等人工批准
+- 判决层通过 → 直接进 outbox，可被通道 claim
 - 判决层拒绝 → 直接 block，不进 outbox
-- 判决层超时 / 报错 / 输出不合法 → 回退人工审批（fail-safe）
-- 要自动公开，把目标加进白名单（例如 `reply:*`）；判决层仍会逐条判定
+- 判决层超时 / 报错 / 输出不合法 / 缺席 → 直接 block（fail-safe，不排队等人工）
 
-私信要自动发出，同样需要白名单；私聊 + 白名单目标**连规则表也跳过**（白名单即可信目标契约），公开/群不享受该例外：
+私信非白名单目标只过规则表，通过即发；私聊 + 白名单目标**连规则表也跳过**（白名单即可信目标契约）：
 
 ```yaml
 whitelistJson: '["uid:<对方的 B站 uid>","me"]'
@@ -214,7 +213,7 @@ whitelistJson: '["uid:<对方的 B站 uid>","me"]'
 | MCP 接线 | 首轮后 `state.tools` 含 `mcp__bili__bili_search` 等工具 |
 | 事件入 prompt | ingest 后本轮 prompt 出现 `## 新事件`、正文与发送者 id |
 | 私信闭环 | `living_send` 写 outbox → 通道 ack → 对方收到 |
-| 判决层放行 | 公开发言 + 白名单目标 → outbox 可被 claim；判决拒绝 → 不进 outbox；判决失败 → `nextAttemptAt=MAX_SAFE_INTEGER` 等人工 |
+| 判决层放行 | 公开发言 + 判决 pass → outbox 可被 claim；判决拒绝/失败 → 不进 outbox；不再有 `nextAttemptAt=MAX_SAFE_INTEGER` 的新记录 |
 | 判决工具面 | 判决会话可见工具数 0（宿主实测 `working_directory` → `(none)`；日志 `限制层工具面已清空`） |
 | 外发审计 | outbox 行有 `decision` / `rule_id` / `reason` / `verdict_source`；`outbound_decision` / `outbound_approved` / `outbound_rejected` 事件可查；日报异常含被拦数与判决 pass 率 |
 | 宝石静默 | 未 claim 超过 `gemSilenceMinutes` → `gem_silent` 事件、`gemHealth.lastError=gem_unavailable`、skill 段摘掉 |

@@ -109,7 +109,7 @@ export function apply(ctx) {
 
   ctx.tools.register(tool({
     name: 'living_send',
-    description: 'Send one outbound message through the audit gate. Private sends to whitelisted targets go straight through; non-whitelisted targets wait for confirmation; public/group always pass the rule table and limiter. Attach local files with media (absolute paths; kind image or file). The result includes remaining proactive quota when the gem has reported it.',
+    description: 'Send one outbound message through the audit gate. Whitelisted private targets skip the rule table; all other sends pass the rule table, and public/group must also pass the limiter. Nothing waits for human approval: passed sends are queued, failures are blocked. Attach local files with media (absolute paths; kind image or file). The result includes remaining proactive quota when the gem has reported it.',
     parameters: objectSchema({
       gem: { type: 'string' },
       to: { type: 'string' },

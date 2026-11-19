@@ -1173,13 +1173,13 @@ test('handoff 失败仍 rest 换会话', async (t) => {
   assert.equal(failed.payload.error, 'provider_timeout')
 })
 
-test('公开发言：判决层 pass 后按白名单放行', async (t) => {
+test('公开发言：判决层 pass 后直接放行，不需要白名单', async (t) => {
   const seen = []
   const adjudicate = async (input) => {
     seen.push(input)
     return { pass: true, rule_id: null, reason: '' }
   }
-  const { rt, store } = await setup(t, { adjudicate, config: { whitelist: ['reply:1:2:3'] } })
+  const { rt, store } = await setup(t, { adjudicate, config: { whitelist: [] } })
   const result = await rt.sendOutbound({ gem: 'bili', to: 'reply:1:2:3', text: '这是回复', visibility: 'public' })
 
   assert.deepEqual(seen, [{ gem: 'bili', target: 'reply:1:2:3', text: '这是回复', visibility: 'public' }])
@@ -1188,15 +1188,30 @@ test('公开发言：判决层 pass 后按白名单放行', async (t) => {
   const [item] = store.listOutbox({ limit: 10 })
   assert.ok(item.nextAttemptAt < Number.MAX_SAFE_INTEGER, '判决通过后应可被通道 claim')
   assert.equal(item.decision, 'send')
-  assert.equal(item.verdictSource, 'whitelist')
+  assert.equal(item.verdictSource, 'limiter')
   const decisionEvent = store.listEvents({ limit: 50 }).find((event) => event.kind === 'outbound_decision')
   assert.equal(decisionEvent.payload.limiter, 'pass')
   assert.equal(decisionEvent.payload.decision, 'send')
 })
 
+test('公开发言：白名单目标跳过限制层', async (t) => {
+  let calls = 0
+  const adjudicate = async () => {
+    calls += 1
+    return { pass: false, rule_id: 'R-04', reason: '不该被调用' }
+  }
+  const { rt } = await setup(t, { adjudicate, config: { whitelist: ['comment:BV1'] } })
+  const result = await rt.sendOutbound({ gem: 'bili', to: 'comment:BV1', text: '这是白名单公开评论', visibility: 'public' })
+
+  assert.equal(result.queued, true)
+  assert.equal(result.state, 'approved')
+  assert.equal(result.silent, true)
+  assert.equal(calls, 0)
+})
+
 test('公开发言：判决层拒绝 → 不进 outbox', async (t) => {
   const adjudicate = async () => ({ pass: false, rule_id: 'R-04', reason: '攻击性内容' })
-  const { rt, store } = await setup(t, { adjudicate, config: { whitelist: ['reply:1:2:3'] } })
+  const { rt, store } = await setup(t, { adjudicate, config: { whitelist: [] } })
   const result = await rt.sendOutbound({ gem: 'bili', to: 'reply:1:2:3', text: '普通但判决拒绝', visibility: 'public' })
 
   assert.equal(result.queued, false)
@@ -1209,17 +1224,17 @@ test('公开发言：判决层拒绝 → 不进 outbox', async (t) => {
   assert.equal(decisionEvent.payload.limiter, 'block')
 })
 
-test('公开发言：判决层异常 → 回退待审，不直发', async (t) => {
+test('公开发言：判决层异常 → 拦截，不直发', async (t) => {
   const adjudicate = async () => {
     throw new Error('provider_timeout')
   }
-  const { rt, store } = await setup(t, { adjudicate, config: { whitelist: ['reply:1:2:3'] } })
+  const { rt, store } = await setup(t, { adjudicate, config: { whitelist: [] } })
   const result = await rt.sendOutbound({ gem: 'bili', to: 'reply:1:2:3', text: '这是回复', visibility: 'public' })
 
-  assert.equal(result.queued, true)
-  assert.equal(result.state, 'pending')
-  const [item] = store.listOutbox({ limit: 10 })
-  assert.equal(item.nextAttemptAt, Number.MAX_SAFE_INTEGER)
+  assert.equal(result.queued, false)
+  assert.equal(result.state, 'blocked')
+  assert.equal(result.ruleId, 'R-00')
+  assert.equal(store.listOutbox({ limit: 10 }).length, 0)
 })
 
 test('私聊不调用判决层；规则表命中也不调用', async (t) => {
@@ -1247,7 +1262,7 @@ test('显式 limiter verdict 优先于判决层', async (t) => {
     calls += 1
     return { pass: false, rule_id: 'R-02', reason: '不该被调用' }
   }
-  const { rt } = await setup(t, { adjudicate, config: { whitelist: ['reply:1:2:3'] } })
+  const { rt } = await setup(t, { adjudicate, config: { whitelist: [] } })
   const result = await rt.sendOutbound({
     gem: 'bili',
     to: 'reply:1:2:3',
@@ -1259,7 +1274,7 @@ test('显式 limiter verdict 优先于判决层', async (t) => {
   assert.equal(calls, 0)
 })
 
-test('外发闸门：白名单私聊直发（规则表也跳过）、非白名单挂起/规则拦截', async (t) => {
+test('外发闸门：白名单私聊直发（规则表也跳过）、非白名单规则通过即放行、规则命中拦截', async (t) => {
   const { rt, store } = await setup(t, {
     runner: async () => ({ tokens: 0 }),
     config: { whitelist: ['uid_ok'] },
@@ -1273,9 +1288,9 @@ test('外发闸门：白名单私聊直发（规则表也跳过）、非白名�
   assert.equal(trustedHit.queued, true)
   assert.equal(trustedHit.state, 'approved')
 
-  const review = await rt.sendOutbound({ gem: 'bili', to: 'uid_new', text: '在', visibility: 'private' })
-  assert.equal(review.queued, true)
-  assert.equal(review.state, 'pending')
+  const direct = await rt.sendOutbound({ gem: 'bili', to: 'uid_new', text: '在', visibility: 'private' })
+  assert.equal(direct.queued, true)
+  assert.equal(direct.state, 'approved')
 
   const blocked = await rt.sendOutbound({ gem: 'bili', to: 'uid_new', text: '我的手机 13800138000', visibility: 'private' })
   assert.equal(blocked.queued, false)
@@ -1285,8 +1300,8 @@ test('外发闸门：白名单私聊直发（规则表也跳过）、非白名�
   const items = store.listOutbox({ gem: 'bili', limit: 10 })
   assert.equal(items.length, 3, 'blocked 不进入 outbox')
   const claimable = await store.claimOutbox({ gem: 'bili', limit: 10, nowMs: NOW })
-  assert.equal(claimable.length, 2, '待确认的外发不可被 pull')
-  assert.equal(claimable[0].to, 'uid_ok')
+  assert.equal(claimable.length, 3, '放行的外发都可被 pull')
+  assert.ok(claimable.some((item) => item.to === 'uid_new'))
 })
 
 test('外发媒体：绝对路径落到 outbox，claim 时带回 visibility/media', async (t) => {

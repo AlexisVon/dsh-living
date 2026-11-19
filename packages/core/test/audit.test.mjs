@@ -33,14 +33,18 @@ test('R-01/R-02 对非白名单私聊生效；白名单私聊整表跳过', () =
   assert.equal(direct.silent, true)
 })
 
-test('白名单只对私聊跳过规则表；公开/群仍按规则表', () => {
+test('白名单任何 visibility 都整表跳过', () => {
   const pub = decideOutbound({ text: '我的手机 13800138000', target: 'uid_9', visibility: 'public', whitelist: ['uid_9'] })
-  assert.equal(pub.decision, 'block')
-  assert.equal(pub.ruleId, 'R-01')
+  assert.equal(pub.decision, 'allow')
+  assert.equal(pub.silent, true)
+  assert.equal(pub.verdictSource, 'whitelist')
 
   const group = decideOutbound({ text: '扫码加我微信', target: 'uid_9', visibility: 'group', whitelist: ['uid_9'] })
-  assert.equal(group.decision, 'block')
-  assert.equal(group.ruleId, 'R-05')
+  assert.equal(group.decision, 'allow')
+
+  const noLimiter = decideOutbound({ text: '今天天气不错', target: 'uid_9', visibility: 'public', whitelist: ['uid_9'] })
+  assert.equal(noLimiter.decision, 'allow')
+  assert.equal(noLimiter.requiresLimiter, false)
 })
 
 test('R-03/R-05 只拦公开发言', () => {
@@ -57,18 +61,20 @@ test('白名单：精确、通配、对象形式', () => {
   assert.equal(isWhitelisted({ target: 'x' }, ['*']), true)
 })
 
-test('私聊非白名单 → 待确认；白名单 → 静默放行', () => {
-  const review = decideOutbound({ text: '在吗', target: 'uid_9', visibility: 'private', whitelist: [] })
-  assert.equal(review.decision, 'review')
+test('私聊：规则通过即放行，白名单免规则表', () => {
+  const direct = decideOutbound({ text: '在吗', target: 'uid_9', visibility: 'private', whitelist: [] })
+  assert.equal(direct.decision, 'allow')
+  assert.equal(direct.silent, false)
 
   const allow = decideOutbound({ text: '在吗', target: 'uid_9', visibility: 'private', whitelist: ['uid_9'] })
   assert.equal(allow.decision, 'allow')
   assert.equal(allow.silent, true)
 })
 
-test('公开发言必须过限制层，缺失即待确认（不得直发）', () => {
-  const noLimiter = decideOutbound({ text: '今天天气不错', visibility: 'public', whitelist: ['uid_9'] })
-  assert.equal(noLimiter.decision, 'review')
+test('公开发言必须过限制层，缺失即拦截（不得直发）', () => {
+  const noLimiter = decideOutbound({ text: '今天天气不错', visibility: 'public', whitelist: [] })
+  assert.equal(noLimiter.decision, 'block')
+  assert.equal(noLimiter.ruleId, 'R-00')
   assert.equal(noLimiter.requiresLimiter, true)
   assert.equal(noLimiter.verdictSource, 'limiter')
 
@@ -76,11 +82,12 @@ test('公开发言必须过限制层，缺失即待确认（不得直发）', ()
     text: '今天天气不错',
     visibility: 'public',
     target: 'uid_9',
-    whitelist: ['uid_9'],
+    whitelist: [],
     limiter: { pass: true },
   })
   assert.equal(passed.decision, 'allow')
-  assert.equal(passed.verdictSource, 'whitelist')
+  assert.equal(passed.silent, false)
+  assert.equal(passed.verdictSource, 'limiter')
 
   const failed = decideOutbound({
     text: '今天天气不错',

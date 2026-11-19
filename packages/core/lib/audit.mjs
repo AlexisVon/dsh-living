@@ -1,7 +1,7 @@
 /**
- * Outbound gate: private messages to whitelisted targets skip the rule table;
- * otherwise rule table → limiter (public/group) → whitelist. Every outbound
- * gets a pending record; only whitelisted targets may send silently.
+ * Outbound gate: a whitelisted target is fully trusted and skips every gate.
+ * Everything else is rule table → limiter (public/group), then send or block.
+ * Human review is not a gate: budget and the limiter already own that decision.
  */
 
 export const AUDIT_RULES = Object.freeze([
@@ -97,7 +97,7 @@ export function decideOutbound({
   rules = AUDIT_RULES,
 } = {}) {
   const trusted = isWhitelisted({ target, gem, visibility }, whitelist)
-  if (visibility === 'private' && trusted) {
+  if (trusted) {
     return {
       decision: 'allow',
       silent: true,
@@ -126,10 +126,10 @@ export function decideOutbound({
   if (forced) {
     if (!limiter) {
       return {
-        decision: 'review',
+        decision: 'block',
         silent: false,
-        ruleId: null,
-        reason: '公开发言必须过限制层',
+        ruleId: 'R-00',
+        reason: '公开发言缺少限制层判决',
         verdictSource: 'limiter',
         hits,
         requiresLimiter: true,
@@ -146,25 +146,23 @@ export function decideOutbound({
         requiresLimiter: false,
       }
     }
-  }
-
-  if (trusted) {
     return {
       decision: 'allow',
-      silent: true,
+      silent: false,
       ruleId: null,
-      reason: '白名单直通',
-      verdictSource: 'whitelist',
+      reason: '限制层放行',
+      verdictSource: 'limiter',
       hits,
       requiresLimiter: false,
     }
   }
+
   return {
-    decision: 'review',
+    decision: 'allow',
     silent: false,
     ruleId: null,
-    reason: '非白名单外发需确认',
-    verdictSource: 'whitelist',
+    reason: '规则表通过',
+    verdictSource: 'rule',
     hits,
     requiresLimiter: false,
   }
