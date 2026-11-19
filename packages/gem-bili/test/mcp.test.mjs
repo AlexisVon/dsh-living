@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline'
 
 const server = fileURLToPath(new URL('../mcp/server.js', import.meta.url))
 
-test('MCP server 能 initialize 并列出十个工具', async (t) => {
+test('MCP server 能 initialize 并列出十二个工具', async (t) => {
   const child = spawn(process.execPath, [server], { stdio: ['pipe', 'pipe', 'pipe'] })
   t.after(() => child.kill())
   const lines = createInterface({ input: child.stdout })
@@ -33,10 +33,12 @@ test('MCP server 能 initialize 并列出十个工具', async (t) => {
   assert.deepEqual(
     list.result.tools.map((tool) => tool.name).sort(),
     [
+      'bili_comment_tree',
       'bili_comments',
       'bili_dm_history',
       'bili_dm_sessions',
       'bili_dynamics',
+      'bili_notifications',
       'bili_owner',
       'bili_replies',
       'bili_search',

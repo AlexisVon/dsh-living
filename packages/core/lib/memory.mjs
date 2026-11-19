@@ -16,7 +16,9 @@ export function collectMemoryItems(store, { now = Date.now(), since = null, limi
   const items = []
   for (const event of store.listEvents({ since, kinds: MEMORY_EVENT_KINDS, limit, order: 'desc' })) {
     const imported = event.kind === 'import' || event.source === 'import'
-    const text = event.payload?.text ?? JSON.stringify(event.payload ?? {})
+    const body = event.payload?.text ?? JSON.stringify(event.payload ?? {})
+    const replyTo = event.payload?.meta?.reply_to
+    const text = replyTo ? `${body}（回复目标: ${replyTo}）` : body
     items.push({
       id: event.id,
       kind: imported ? 'fact' : event.kind,

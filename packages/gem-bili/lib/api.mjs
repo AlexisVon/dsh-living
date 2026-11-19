@@ -262,6 +262,85 @@ export async function getReplies({ oid, root, limit = 10, cred = null, fetchImpl
   return (data?.replies ?? []).map((reply) => mapComment(reply, { oid: Number(oid), root: Number(root) }))
 }
 
+export async function getCommentTree({ bvid = null, oid = null, root, limit = 50, cred = null, fetchImpl = fetch } = {}) {
+  const rootId = Number(root)
+  if (!Number.isInteger(rootId) || rootId <= 0) throw new BiliError('bad_target', `评论 root 不合法: ${root}`, { kind: 'config' })
+  let aid = Number(oid) || 0
+  let videoBvid = bvid || ''
+  if (!aid) {
+    if (!videoBvid) throw new BiliError('bad_target', '需要 bvid 或 oid 定位视频', { kind: 'config' })
+    const video = await getVideo(videoBvid, { cred, fetchImpl })
+    aid = video.aid
+    videoBvid = video.bvid || videoBvid
+  }
+  const detail = await requestJson(`${API}/x/v2/reply/detail`, {
+    params: { type: 1, oid: aid, root: rootId, ps: 20, pn: 1 },
+    cred,
+    fetchImpl,
+  })
+  if (!detail?.root) throw new BiliError('not_found', `找不到评论 ${rootId}`, { kind: 'not_found' })
+  const rootComment = mapComment(detail.root, { oid: aid, bvid: videoBvid, root: rootId })
+  const max = Math.min(100, Math.max(1, Number(limit) || 50))
+  const replies = []
+  let total = 0
+  let page = 1
+  while (replies.length < max) {
+    const size = Math.min(20, max - replies.length)
+    const data = await requestJson(`${API}/x/v2/reply/reply`, {
+      params: { type: 1, oid: aid, root: rootId, ps: size, pn: page },
+      cred,
+      fetchImpl,
+    })
+    total = Number(data?.page?.count) || total
+    const rows = data?.replies ?? []
+    if (rows.length === 0) break
+    replies.push(...rows.map((reply) => mapComment(reply, { oid: aid, bvid: videoBvid, root: rootId })))
+    if (total > 0 && replies.length >= total) break
+    page += 1
+  }
+  const rootNode = { ...rootComment, depth: 0, children: [] }
+  const nodes = replies.map((reply) => ({ ...reply, depth: null, parentAuthor: null, parentMissing: false, children: [] }))
+  const byRpid = new Map(nodes.map((node) => [node.rpid, node]))
+  for (const node of nodes) {
+    const parent = byRpid.get(node.parent)
+    if (parent && parent !== node) {
+      node.parentAuthor = parent.author
+      parent.children.push(node)
+    } else if (node.parent === rootId) {
+      node.depth = 1
+      node.parentAuthor = rootNode.author
+      rootNode.children.push(node)
+    } else {
+      node.depth = 1
+      node.parentMissing = true
+      rootNode.children.push(node)
+    }
+  }
+  const assignDepth = (node, depth) => {
+    node.depth = depth
+    for (const child of node.children) assignDepth(child, depth + 1)
+  }
+  assignDepth(rootNode, 0)
+  return {
+    root: rootNode,
+    replies: nodes,
+    total: total || replies.length,
+    truncated: total > replies.length,
+  }
+}
+
+export async function getNotifications({ kind = 'all', limit = 10, cred = null, fetchImpl = fetch } = {}) {
+  const kinds = kind === 'all' ? ['at', 'reply'] : [String(kind)]
+  if (kinds.some((value) => value !== 'at' && value !== 'reply')) {
+    throw new BiliError('bad_kind', `通知类型只能是 at/reply/all: ${kind}`, { kind: 'config' })
+  }
+  const items = []
+  for (const value of kinds) items.push(...await getMsgfeed(value, { cred, fetchImpl }))
+  return items
+    .sort((left, right) => right.ts - left.ts)
+    .slice(0, Math.min(20, Math.max(1, Number(limit) || 10)))
+}
+
 function mapComment(reply, { oid, bvid = '', root = null } = {}) {
   const rpid = Number(reply.rpid) || 0
   const rootId = Number(reply.root) || Number(root) || rpid

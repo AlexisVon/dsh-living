@@ -15,6 +15,8 @@
 | `bili_subtitle` | 读字幕原文；判断视频讲了什么之前先用它 |
 | `bili_comments` | 读视频下面的热门评论，含 `rpid`、`root` 与 `reply_to` |
 | `bili_replies` | 读某条评论下的子回复，含 `reply_to` |
+| `bili_comment_tree` | 通过 `root` 或 `reply_to` 读根评论 + 整棵子回复树；每个回复都带 `reply_to` |
+| `bili_notifications` | 读最近 @/回复通知，含发送者、正文、链接与 `reply_to` |
 | `bili_dm_sessions` | 列最近私信会话（uid、未读、最后时间、预览） |
 | `bili_dm_history` | 主动读某人的历史私信（最多最近 50 条，可传 `before`） |
 | `bili_dynamics` | 读关注列表的视频动态（需要登录态） |
@@ -56,6 +58,16 @@
 - 视频顶层评论：`bili_comments` 返回的 `reply_to` 已经是 `reply:<oid>:<rpid>:<rpid>`，直接抄。
 - 评论下的子回复：先用 `bili_replies` 拿 `reply_to`，再抄；不要自己拼 `root/parent`。
 - 别人 @ 你 / 回复你：事件行末尾的 `[回复目标: …]` 直接抄。
+
+## 被 @ / 被回复时怎么找整棵树
+
+不要先去翻热门评论——你那条评论可能赞少，不在 `bili_comments` 的前 20 条里。
+
+1. 事件行末尾有 `[回复目标: reply:<oid>:<root>:<parent>]` → 直接
+   `bili_comment_tree({ reply_to: "reply:...", limit: 50 })`。
+2. 事件已经消费、看不到目标 → `bili_notifications({ kind: "at" })` 或 `"reply"`，取最近通知里的 `reply_to` 再调 tree。
+3. 在 `tree.replies` 里选要回的那条，把它的 `reply_to` 填进 `living_send` 的 `to`；公开回复带 `visibility: "public"`。
+4. tree 返回 `root` + 嵌套 `children`，每条回复有 `parentAuthor` / `depth` / `parent`，能看出谁回复谁；`replies` 同时给扁平列表。默认最多 100 条，`truncated` 表示还有更多。
 
 **预算与限制**：回复陌生人会消耗一轮预算，先看 `living_state` 的余额，不值就不回。**主动发起**的私信/评论每天有额度（默认 20 条），回复收到的消息不占；每次 `living_send` 返回里带 `remaining`（还剩几条主动额度）和 `quota` 明细，据此决定下一条要不要发。额度用尽后宝石会以 `provider_quota` 直接拒绝这条外发——不要换目标重试。所有外发还有 5 条/分钟和同目标 60 秒冷却。
 

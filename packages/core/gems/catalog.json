@@ -5,7 +5,7 @@
       "id": "bili",
       "name": "B站",
       "package": "dsh-gem-bili",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "description": "搜视频、读字幕与评论、读历史私信、收私信和 @/回复通知；私信与公开评论都过规则表，公开外发再过限制层。",
       "capabilities": {
         "text": true,

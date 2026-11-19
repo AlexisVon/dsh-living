@@ -42,6 +42,24 @@ test('候选池取最近 N 条，不是最早 N 条', async (t) => {
   assert.deepEqual(items.filter((item) => item.kind === 'message').map((item) => item.id), ['ev2', 'ev3'])
 })
 
+test('事件文本带上回复目标，L0 可直接拿到 reply_to', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'living-memory-'))
+  const store = createStore({ path: join(home, 'life.db'), now: () => NOW })
+  t.after(async () => {
+    await store.close()
+    rmSync(home, { recursive: true, force: true })
+  })
+  await store.appendEvent({
+    id: 'at_1',
+    ts: NOW,
+    kind: 'notice',
+    source: 'bili',
+    payload: { text: '司丌 @ 了你', meta: { reply_to: 'reply:100:200:200' } },
+  })
+  const [item] = collectMemoryItems(store, { now: NOW })
+  assert.match(item.text, /回复目标: reply:100:200:200/)
+})
+
 test('G1：图关系把邻居条目带进召回', () => {
   const items = [
     entry({ id: 'ep1', kind: 'episode', text: '修显卡', source: 'episode' }),

@@ -2,8 +2,10 @@
 import { createInterface } from 'node:readline'
 import {
   fetchDmHistory,
+  getCommentTree,
   getComments,
   getDynamics,
+  getNotifications,
   getReplies,
   getSubtitle,
   getUser,
@@ -14,7 +16,7 @@ import {
 import { loadConfig, loadCredential } from '../lib/config.mjs'
 
 const NAME = 'dsh-gem-bili'
-const VERSION = '0.1.0'
+const VERSION = '0.2.2'
 const PROTOCOL = '2024-11-05'
 
 const TOOLS = [
@@ -90,6 +92,31 @@ const TOOLS = [
         limit: { type: 'number', description: 'Max replies, 1-20. Default 10.' },
       },
       required: ['bvid', 'rpid'],
+    },
+  },
+  {
+    name: 'bili_comment_tree',
+    description: 'Read one root comment and its whole sub-reply tree (up to limit). Nested children, parentAuthor and depth show who replied to whom; every row carries reply_to. Use reply_to from an @/reply notice or bvid+root.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bvid: { type: 'string', description: 'BV id. Optional when oid or reply_to is given.' },
+        oid: { type: 'number', description: 'Video aid/oid. Optional when bvid or reply_to is given.' },
+        root: { type: 'number', description: 'Root comment rpid.' },
+        reply_to: { type: 'string', description: 'reply:<oid>:<root>:<parent>, copied from a notice or comment row.' },
+        limit: { type: 'number', description: 'Max sub-replies, 1-100. Default 50.' },
+      },
+    },
+  },
+  {
+    name: 'bili_notifications',
+    description: 'List recent @ and reply notifications with sender, text, URI and reply_to target. Use the target with bili_comment_tree or living_send.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['at', 'reply', 'all'], description: 'Notification kind. Default all.' },
+        limit: { type: 'number', description: 'Max items, 1-20. Default 10.' },
+      },
     },
   },
   {
@@ -194,6 +221,24 @@ async function callTool(name, args) {
         .map((reply) => `- ${reply.author}（uid ${reply.mid}, rpid ${reply.rpid}, root ${reply.root}，赞 ${reply.like}）回复目标 ${reply.replyTo}：${reply.text}`)
         .join('\n'),
     )
+  }
+  if (name === 'bili_comment_tree') {
+    let oid = Number(args.oid) || 0
+    let root = Number(args.root) || 0
+    const bvid = typeof args.bvid === 'string' && args.bvid !== '' ? args.bvid : null
+    if (typeof args.reply_to === 'string' && args.reply_to !== '') {
+      const parts = args.reply_to.split(':')
+      if (parts[0] !== 'reply' || parts.length < 3) return toolError(new Error(`reply_to 不合法: ${args.reply_to}`))
+      oid = Number(parts[1]) || oid
+      root = Number(parts[2]) || root
+    }
+    if (root <= 0) return toolError(new Error('需要 root 或 reply_to'))
+    return text(JSON.stringify(await getCommentTree({ bvid, oid: oid || null, root, limit: args.limit ?? 50, cred: credential() }), null, 2))
+  }
+  if (name === 'bili_notifications') {
+    const items = await getNotifications({ kind: args.kind ?? 'all', limit: args.limit ?? 10, cred: credential() })
+    if (items.length === 0) return text('没有最近的 @ 或回复通知。')
+    return text(JSON.stringify(items, null, 2))
   }
   if (name === 'bili_dm_sessions') {
     const sessions = await listDmSessions({ cred: credential() })

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.8 — 2026-11-19
+
+- L0/记忆事件文本带上 `meta.reply_to`（`（回复目标: …）`），agent 不再丢失 @/回复通知里的 root rpid。
+- `dsh-gem-bili` 0.2.2：新增 `bili_comment_tree`（root/reply_to → 根评论 + 嵌套子回复 `children`，含 `parentAuthor`/`depth`/每条 `reply_to`，默认 50 上限 100）与 `bili_notifications`（最近 @/回复通知及 reply_to）。
+- 测试：core 330 / gem-bili 39。
+
 ## 0.3.7 — 2026-11-19
 
 - 外发 ack 失败写入 silent `change` 事件（含 gem/目标/错误码/是否重试），agent 下一轮可见，不再把 approved 当已发送。

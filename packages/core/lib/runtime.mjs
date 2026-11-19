@@ -1587,8 +1587,10 @@ export function createRuntime({
   }
 
   function memoryEventRow(event) {
-    const text = String(event.payload?.text ?? JSON.stringify(event.payload ?? {})).replace(/\s+/g, ' ').trim().slice(0, 1200)
-    return { source: 'events', id: event.id, kind: event.kind, ts: event.ts, text, rawRefs: [] }
+    const replyTo = event.payload?.meta?.reply_to
+    const suffix = replyTo ? `（回复目标: ${replyTo}）` : ''
+    const body = String(event.payload?.text ?? JSON.stringify(event.payload ?? {})).replace(/\s+/g, ' ').trim()
+    return { source: 'events', id: event.id, kind: event.kind, ts: event.ts, text: `${body.slice(0, 1200 - suffix.length)}${suffix}`, rawRefs: [] }
   }
 
   function memoryJournalRow(entry, normalized = null) {

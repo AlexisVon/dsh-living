@@ -5,7 +5,9 @@ import {
   BiliError,
   dmImageParams,
   fetchDmHistory,
+  getCommentTree,
   getComments,
+  getNotifications,
   getReplies,
   getUser,
   isSystemDm,
@@ -198,6 +200,90 @@ test('发送目标解析：私信 / 评论 / 视频 / 非法', () => {
   assert.deepEqual(parseTarget('comment:123'), { kind: 'comment', oid: 123 })
   assert.deepEqual(parseTarget('comment:BV1xx411c7mD'), { kind: 'comment_bvid', bvid: 'BV1xx411c7mD' })
   assert.throws(() => parseTarget('@someone'), /无法识别/)
+})
+
+test('评论树：根评论 + 子回复，子回复带回 reply_to', async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes('/x/web-interface/view')) {
+      return new Response(JSON.stringify({ code: 0, data: { aid: 100, bvid: 'BV1xx411c7mD' } }), { status: 200 })
+    }
+    if (String(url).includes('/x/v2/reply/detail')) {
+      return new Response(JSON.stringify({
+        code: 0,
+        data: {
+          root: { rpid: 200, root: 0, parent: 0, mid: 9, member: { uname: 'A' }, content: { message: 'root' }, like: 1, rcount: 1, ctime: 1700000000 },
+        },
+      }), { status: 200 })
+    }
+    return new Response(JSON.stringify({
+      code: 0,
+      data: {
+        page: { count: 1 },
+        replies: [{ rpid: 201, root: 200, parent: 200, mid: 10, member: { uname: 'B' }, content: { message: 'child' }, like: 0, ctime: 1700000001 }],
+      },
+    }), { status: 200 })
+  }
+  const tree = await getCommentTree({ bvid: 'BV1xx411c7mD', root: 200, fetchImpl })
+  assert.equal(tree.root.text, 'root')
+  assert.equal(tree.root.replyTo, 'reply:100:200:200')
+  assert.equal(tree.replies[0].text, 'child')
+  assert.equal(tree.replies[0].replyTo, 'reply:100:200:201')
+  assert.equal(tree.replies[0].depth, 1)
+  assert.equal(tree.replies[0].parentAuthor, 'A')
+  assert.equal(tree.root.children[0].rpid, 201)
+  assert.equal(tree.total, 1)
+  assert.equal(tree.truncated, false)
+})
+
+test('评论树：parent 链生成 children，标出谁回复谁', async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes('/x/web-interface/view')) {
+      return new Response(JSON.stringify({ code: 0, data: { aid: 100, bvid: 'BV1xx411c7mD' } }), { status: 200 })
+    }
+    if (String(url).includes('/x/v2/reply/detail')) {
+      return new Response(JSON.stringify({
+        code: 0,
+        data: { root: { rpid: 200, root: 0, parent: 0, mid: 9, member: { uname: 'ROOT' }, content: { message: 'root' }, like: 1, rcount: 2, ctime: 1700000000 } },
+      }), { status: 200 })
+    }
+    return new Response(JSON.stringify({
+      code: 0,
+      data: {
+        page: { count: 2 },
+        replies: [
+          { rpid: 201, root: 200, parent: 200, mid: 10, member: { uname: 'A' }, content: { message: 'to root' }, like: 0, ctime: 1700000001 },
+          { rpid: 202, root: 200, parent: 201, mid: 11, member: { uname: 'B' }, content: { message: 'to A' }, like: 0, ctime: 1700000002 },
+        ],
+      },
+    }), { status: 200 })
+  }
+  const tree = await getCommentTree({ bvid: 'BV1xx411c7mD', root: 200, fetchImpl })
+  assert.equal(tree.root.children[0].rpid, 201)
+  assert.equal(tree.root.children[0].children[0].rpid, 202)
+  assert.equal(tree.root.children[0].children[0].parentAuthor, 'A')
+  assert.equal(tree.root.children[0].children[0].depth, 2)
+  assert.equal(tree.replies.find((row) => row.rpid === 202).parentAuthor, 'A')
+})
+
+test('通知列表：at/reply 合并、按时间倒序并带 reply_to', async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes('/x/msgfeed/at')) {
+      return new Response(JSON.stringify({
+        code: 0,
+        data: { items: [{ id: 1, at_time: 1700000000, user: { mid: 9, nickname: 'A' }, item: { subject_id: 100, source_id: 200, root_id: 0, title: 'v', source_content: '@你', uri: 'https://www.bilibili.com/video/BV1xx411c7mD' } }] },
+      }), { status: 200 })
+    }
+    return new Response(JSON.stringify({
+      code: 0,
+      data: { items: [{ id: 2, reply_time: 1700000001, user: { mid: 10, nickname: 'B' }, item: { subject_id: 100, target_id: 201, root_id: 200, title: 'v', source_content: '回复', uri: 'https://www.bilibili.com/video/BV1xx411c7mD' } }] },
+    }), { status: 200 })
+  }
+  const items = await getNotifications({ kind: 'all', fetchImpl })
+  assert.equal(items.length, 2)
+  assert.equal(items[0].kind, 'reply')
+  assert.equal(items[0].replyTo, 'reply:100:200:201')
+  assert.equal(items[1].kind, 'at')
+  assert.equal(items[1].replyTo, 'reply:100:200:200')
 })
 
 test('失败码映射', () => {
