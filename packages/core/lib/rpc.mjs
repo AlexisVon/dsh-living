@@ -88,6 +88,10 @@ export function createAdminRpc({
         if (!session) return fail('session_unavailable', '当前宿主没有主会话管理器')
         return ok(await session.setVisible(payload?.visible === true))
       }
+      if (endpoint === 'unschedule') {
+        const ids = Array.isArray(payload?.ids) ? payload.ids : (payload?.id ? [payload.id] : [])
+        return ok(await runtime.service().unschedule(ids))
+      }
       if (endpoint === 'budgetReset') {
         return ok(await runtime.service().resetBudget(String(payload?.reason ?? 'manual')))
       }

@@ -353,8 +353,8 @@ window.__ModuleLoader__.load({
           h(Button, { variant: 'outline', size: 'sm', icon: h(IconPlusOutlineRegular, { size: 14 }), onClick: add }, '添加')))
     }
 
-    function Field({ label, help, error, children, wide = false }) {
-      return h('div', { className: 'living-field' },
+    function Field({ label, help, error, children, wide = false, full = false }) {
+      return h('div', { className: 'living-field', style: full ? { gridColumn: '1 / -1' } : undefined },
         h('div', { className: 'living-field-label' }, label),
         h('div', { className: wide ? 'living-control living-control-wide' : 'living-control' }, children),
         error ? h('div', { className: 'living-field-error' }, error) : null,
@@ -362,6 +362,30 @@ window.__ModuleLoader__.load({
     }
 
     /** Text/number input that commits on blur/Enter, never per keystroke. */
+    function RangeInput({ value, commit, placeholder }) {
+      const [draft, setDraft] = React.useState(value ?? '')
+      React.useEffect(() => setDraft(value ?? ''), [value])
+      const fire = () => {
+        if (draft !== (value ?? '')) commit(draft)
+      }
+      return h('textarea', {
+        className: 'living-textarea',
+        rows: 2,
+        spellCheck: false,
+        placeholder,
+        style: { minHeight: 48, fontFamily: 'ui-monospace, monospace', fontSize: 12 },
+        value: draft,
+        onChange: (event) => setDraft(event.target.value),
+        onBlur: fire,
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            fire()
+          }
+        },
+      })
+    }
+
     function CommitInput({ value, commit, kind = 'text', ...props }) {
       const [draft, setDraft] = React.useState(value ?? '')
       React.useEffect(() => setDraft(value ?? ''), [value])
@@ -400,14 +424,30 @@ window.__ModuleLoader__.load({
       const [sleepDialog, setSleepDialog] = React.useState(false)
       const [sleepBusy, setSleepBusy] = React.useState(false)
       const [sleepUnlimited, setSleepUnlimited] = React.useState(false)
-      const [showAllSchedule, setShowAllSchedule] = React.useState(false)
+      const [scheduleDay, setScheduleDay] = React.useState('')
       const state = useRpc('state', { nonce })
       const gemsRpc = useRpc('gems', { nonce })
       const s = state.value
       const session = s?.session
       const budget = s?.budget ?? {}
       const limits = budget.limits ?? {}
-      const upcoming = (s?.schedule ?? []).filter((item) => !item.done && !item.missed)
+      const dayKeyOf = (ts) => {
+        const date = new Date(ts)
+        return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+      }
+      const todayKey = dayKeyOf(Date.now())
+      const schedule = (s?.schedule ?? []).filter((item) => Number.isFinite(item.at))
+      const byDay = new Map()
+      for (const item of schedule) {
+        const key = dayKeyOf(item.at)
+        if (!byDay.has(key)) byDay.set(key, [])
+        byDay.get(key).push(item)
+      }
+      const futureKeys = [...byDay.keys()].filter((key) => key >= todayKey).sort()
+      const tabKeys = futureKeys.includes(todayKey) ? futureKeys : [todayKey, ...futureKeys]
+      const activeDay = tabKeys.includes(scheduleDay) ? scheduleDay : todayKey
+      const activeSchedule = (byDay.get(activeDay) ?? []).slice().sort((left, right) => left.at - right.at)
+      const dayLabel = (key) => key === todayKey ? '今天' : key === dayKeyOf(Date.now() + 86_400_000) ? '明天' : key.slice(5)
       const gemHealth = new Map((s?.gems ?? []).map((row) => [row.id, row]))
       const consolidationLabel = (c) => {
         if (!c) return '—'
@@ -424,6 +464,16 @@ window.__ModuleLoader__.load({
             setNonce((value) => value + 1)
           })
           .catch((error) => notify(`切换失败：${error.message}`, 'error'))
+      }
+
+      const cancelSchedule = (id) => {
+        call('unschedule', { ids: [id] })
+          .then((result) => {
+            if (result?.removed?.length) notify('日程已取消')
+            else notify(`没有找到日程：${id}`, 'error')
+            setNonce((value) => value + 1)
+          })
+          .catch((error) => notify(`取消失败：${error.message}`, 'error'))
       }
 
       const resetBudget = () => {
@@ -463,7 +513,6 @@ window.__ModuleLoader__.load({
       const stepTone = (stepState) => stepState === 'done' ? 'ok' : stepState === 'active' ? 'warn' : stepState === 'failed' ? 'error' : 'muted'
       const stepLabel = (stepState) => stepState === 'done' ? '完成' : stepState === 'active' ? '进行中' : stepState === 'failed' ? '失败' : '等待'
       const sleepingNow = s.status === 'SLEEPING' || sleepProgress?.running === true
-      const scheduleRows = showAllSchedule ? upcoming : upcoming.slice(0, 3)
 
       return h('div', { className: 'living-grid' },
         h('section', { className: 'living-card living-span-4' },
@@ -513,15 +562,34 @@ window.__ModuleLoader__.load({
           line('上次睡眠', s.lastSleep?.finishedAt
             ? `${s.lastSleep.trigger === 'manual' ? '手动' : '夜睡'} ${clockTimeShort(s.lastSleep.startedAt)}–${clockTimeShort(s.lastSleep.finishedAt)}（${Math.max(1, Math.round((s.lastSleep.durationMs ?? 0) / 60000))} 分钟）`
             : '—'),
-          line('日程', upcoming.length > 0 ? `${upcoming.length} 项待办` : '无'),
-          ...scheduleRows.map((item) => h('div', { key: item.id, className: 'living-row living-row-schedule' },
-            h('span', { className: 'living-mono' }, clockDayTime(item.at)),
-            h('span', { className: 'living-intent', title: item.intent || item.id }, item.intent || item.id))),
-          upcoming.length > 3
-            ? h('div', { className: 'living-controls' },
-                h(Button, { variant: 'ghost', size: 'sm', onClick: () => setShowAllSchedule((value) => !value) },
-                  showAllSchedule ? '收起日程' : `展开其余 ${upcoming.length - 3} 项`))
+          tabKeys.length > 1
+            ? h('div', { className: 'living-controls living-schedule-tabs' },
+                ...tabKeys.map((key) => h(Pill, {
+                  key,
+                  active: key === activeDay,
+                  onClick: () => setScheduleDay(key),
+                }, `${dayLabel(key)} · ${(byDay.get(key) ?? []).length}`)))
             : null,
+          line(activeDay === todayKey ? '今日日程' : '日程', activeSchedule.length > 0 ? `${activeSchedule.length} 项` : '无'),
+          activeSchedule.length > 0
+            ? h('div', { className: 'living-schedule' },
+                ...activeSchedule.map((item) => {
+                  const stateClass = item.missed ? 'missed' : item.done ? 'done' : 'pending'
+                  return h('div', {
+                    key: item.id,
+                    className: `living-schedule-row ${stateClass}`,
+                    title: item.intent || item.id,
+                  },
+                    h('span', { className: 'living-schedule-time living-mono' }, clockTimeShort(item.at)),
+                    h('span', { className: 'living-schedule-intent' }, item.missed ? `${item.intent || item.id} · 错过` : (item.intent || item.id)),
+                    h(Button, {
+                      variant: 'ghost',
+                      size: 'sm',
+                      title: item.done || item.missed ? '移除这项日程' : '取消这项日程',
+                      onClick: () => cancelSchedule(item.id),
+                    }, item.done || item.missed ? '移除' : '取消'))
+                }))
+            : h('div', { className: 'living-muted' }, '这天没有日程'),
           h('div', { className: 'living-controls' },
             h(Button, {
               variant: 'outline',
@@ -1003,13 +1071,16 @@ window.__ModuleLoader__.load({
         : [[nightAt, 1440], [0, nightEnd - 1440]]
       const lastMinutes = Number(lastSleep?.durationMs) > 0 ? Math.max(1, Math.round(lastSleep.durationMs / 60000)) : null
       return h('div', { className: 'living-field' },
-        h('svg', { viewBox: `0 0 ${width} 78`, style: { width: '100%', height: 78, display: 'block' }, role: 'img', 'aria-label': '自动唤醒与夜睡时段' },
-          h('rect', { x: 0, y: 10, width, height: 40, fill: 'rgba(127,127,127,0.08)' }),
+        h('svg', { viewBox: `0 0 ${width} 84`, style: { width: '100%', height: 84, display: 'block' }, role: 'img', 'aria-label': '自动唤醒与夜睡时段' },
+          h('defs', null,
+            h('pattern', { id: 'living-night-hatch', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' },
+              h('line', { x1: 0, y1: 0, x2: 0, y2: 6, stroke: 'rgba(220,235,255,0.38)', strokeWidth: 1 }))),
+          h('rect', { x: 0, y: 16, width, height: 40, fill: 'rgba(127,127,127,0.08)' }),
           ...estimate.segments.map((segment, index) =>
             h('rect', {
               key: `seg-${index}`,
               x: x(segment.startMin),
-              y: 10,
+              y: 16,
               width: Math.max(0.5, x(segment.endMin) - x(segment.startMin)),
               height: 40,
               fill: AUTO_CLASS_COLORS[segment.className],
@@ -1019,28 +1090,29 @@ window.__ModuleLoader__.load({
             h('rect', {
               key: `night-${index}`,
               x: x(start),
-              y: 10,
+              y: 16,
               width: Math.max(0.5, x(end) - x(start)),
               height: 40,
-              fill: 'rgba(108,142,191,0.10)',
-              stroke: '#6c8ebf',
-              strokeWidth: 1.2,
-              strokeDasharray: '4 3',
+              fill: 'url(#living-night-hatch)',
+              stroke: '#9cc3ff',
+              strokeWidth: 1.8,
+              strokeDasharray: '6 4',
             })),
-          h('line', { x1: x(nightAt), x2: x(nightAt), y1: 6, y2: 58, stroke: '#6c8ebf', strokeWidth: 2 }),
+          h('line', { x1: x(nightAt), x2: x(nightAt), y1: 8, y2: 60, stroke: '#9cc3ff', strokeWidth: 2 }),
           h('text', {
             x: x(nightAt),
-            y: 6,
+            y: 10,
             textAnchor: nightAt < 120 ? 'start' : nightAt > 1320 ? 'end' : 'middle',
             fontSize: 10,
-            fill: '#6c8ebf',
+            fontWeight: 600,
+            fill: '#9cc3ff',
           }, `夜睡 ${night.at ?? '03:30'}`),
           ...[0, 6, 12, 18, 24].map((hour) =>
             h('g', { key: `tick-${hour}` },
-              h('line', { x1: x(hour * 60), x2: x(hour * 60), y1: 6, y2: 58, stroke: 'rgba(127,127,127,0.45)', strokeWidth: 1 }),
-              h('text', { x: x(hour * 60), y: 72, textAnchor: hour === 0 ? 'start' : hour === 24 ? 'end' : 'middle', fontSize: 11, fill: 'currentColor' }, `${String(hour).padStart(2, '0')}:00`))),
-          h('line', { x1: x(nowMinutes), x2: x(nowMinutes), y1: 4, y2: 58, stroke: '#ff8a00', strokeWidth: 1.5, strokeDasharray: '3 3' }),
-          h('text', { x: x(nowMinutes), y: 8, textAnchor: 'middle', fontSize: 10, fill: '#ff8a00' }, '现在')),
+              h('line', { x1: x(hour * 60), x2: x(hour * 60), y1: 10, y2: 60, stroke: 'rgba(127,127,127,0.45)', strokeWidth: 1 }),
+              h('text', { x: x(hour * 60), y: 76, textAnchor: hour === 0 ? 'start' : hour === 24 ? 'end' : 'middle', fontSize: 11, fill: 'currentColor' }, `${String(hour).padStart(2, '0')}:00`))),
+          h('line', { x1: x(nowMinutes), x2: x(nowMinutes), y1: 8, y2: 60, stroke: '#ff8a00', strokeWidth: 1.5, strokeDasharray: '3 3' }),
+          h('text', { x: x(nowMinutes), y: 10, textAnchor: 'middle', fontSize: 10, fill: '#ff8a00' }, '现在')),
         h('div', { className: 'living-row' },
           ...['high', 'low', 'normal'].map((key) =>
             h('span', { key, className: 'living-chip', style: { borderLeft: `3px solid ${AUTO_CLASS_COLORS[key]}` } },
@@ -1088,8 +1160,8 @@ window.__ModuleLoader__.load({
       }
       const numberField = (name, label, help) => h(Field, { key: name, label, help },
         h(CommitInput, { kind: 'number', value: values[name] ?? '', commit: (value) => commit(name, value) }))
-      const rangeField = (name, label, help, fallback) => h(Field, { key: name, label, help },
-        h(CommitInput, { value: values[name] ?? fallback, placeholder: '06:00-08:00;12:00-14:00;18:00-24:00', commit: (value) => commit(name, value) }))
+      const rangeField = (name, label, help, fallback) => h(Field, { key: name, label, help, full: true },
+        h(RangeInput, { value: values[name] ?? fallback, placeholder: '06:00-08:00;12:00-14:00;18:00-24:00', commit: (value) => commit(name, value) }))
       return h('section', { className: 'living-card' },
         h('div', { className: 'living-card-head' }, h('span', null, '作息与自动唤醒')),
         h('div', { className: 'living-fields-grid' },
@@ -3023,8 +3095,17 @@ function installStyles() {
 .living-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:start}
 .living-span-4{grid-column:span 4}
 .living-span-8{grid-column:span 8}
-.living-row-schedule{flex-wrap:nowrap}
-.living-intent{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.living-schedule{position:relative;display:flex;flex-direction:column;gap:4px;padding-left:16px;margin:2px 0}
+.living-schedule::before{content:'';position:absolute;left:5px;top:6px;bottom:6px;width:1px;background:color-mix(in srgb,currentColor 16%,transparent)}
+.living-schedule-tabs{margin:2px 0}
+.living-schedule-row{position:relative;display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:22px}
+.living-schedule-row::before{content:'';position:absolute;left:-14px;top:50%;width:7px;height:7px;margin-top:-3.5px;border-radius:50%;background:#6c8ebf}
+.living-schedule-time{font-size:11px;color:var(--dsw-alias-label-tertiary,#888);text-align:right;font-variant-numeric:tabular-nums}
+.living-schedule-intent{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.living-schedule-row.done::before{background:color-mix(in srgb,currentColor 30%,transparent)}
+.living-schedule-row.done .living-schedule-intent{color:var(--dsw-alias-label-tertiary,#888)}
+.living-schedule-row.missed::before{background:#c33}
+.living-schedule-row.missed .living-schedule-time{color:#c33}
 @media (max-width:1200px){.living-grid{grid-template-columns:minmax(0,1fr)}.living-span-4,.living-span-8{grid-column:span 1}}
 .living-card{border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:10px;padding:14px 16px;background:color-mix(in srgb,currentColor 3%,transparent);display:flex;flex-direction:column;gap:8px;min-width:0}
 .living-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:600}
@@ -3046,7 +3127,9 @@ function installStyles() {
 .living-bar{height:6px;border-radius:999px;background:color-mix(in srgb,currentColor 12%,transparent);overflow:hidden}
 .living-bar-fill{height:100%;border-radius:999px;background:var(--dsw-alias-state-business-primary,#3a6ea5)}
 .living-field{display:flex;flex-direction:column;gap:4px;min-width:0}
-.living-fields-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px 18px;align-items:start}
+.living-fields-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px 18px;align-items:start;min-width:0}
+.living-fields-grid > *{min-width:0}
+.living-fields-grid input,.living-fields-grid select,.living-fields-grid textarea{width:100%;min-width:0;box-sizing:border-box}
 .living-control{width:100%;max-width:520px}
 .living-control-wide{max-width:100%}
 .living-field-label{font-size:12px;font-weight:600}

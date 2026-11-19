@@ -62,11 +62,39 @@ export function scaledNow(realNow, baseReal, baseSim, timeScale) {
 
 export function addSchedule(state, item) {
   if (!item || typeof item.id !== 'string' || item.id === '') throw new RangeError('schedule.id 必须是非空字符串')
-  if (!Number.isFinite(item.at)) throw new RangeError('schedule.at 必须是 epoch 毫秒')
+  if (!Number.isFinite(item.at) || item.at < 1e12) throw new RangeError('schedule.at 必须是 epoch 毫秒（13 位；不要传秒）')
   const s = cloneState(state)
   if (s.schedule.some((x) => x.id === item.id)) throw new RangeError(`重复的日程 id: ${item.id}`)
   s.schedule.push({ id: item.id, at: item.at, intent: item.intent ?? '', done: false, missed: false })
   return s
+}
+
+/** Repair persisted second-level timestamps; clear a missed flag that only came from the wrong unit. */
+export function repairScheduleTimes(state, now) {
+  let repaired = 0
+  const schedule = (state.schedule ?? []).map((item) => {
+    if (!Number.isFinite(item.at) || item.at < 1e9 || item.at >= 1e12) return item
+    const at = item.at * 1000
+    repaired += 1
+    return { ...item, at, missed: !item.done && at > now ? false : item.missed }
+  })
+  return { state: { ...state, schedule }, repaired }
+}
+
+export function removeSchedules(state, ids) {
+  const wanted = [...new Set((Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean))]
+  if (wanted.length === 0) throw new RangeError('schedule.ids 不能为空')
+  const removed = []
+  const keep = []
+  for (const item of state.schedule ?? []) {
+    if (wanted.includes(item.id)) removed.push(item.id)
+    else keep.push(item)
+  }
+  return {
+    state: { ...cloneState(state), schedule: keep },
+    removed,
+    missing: wanted.filter((id) => !removed.includes(id)),
+  }
 }
 
 export function completeSchedule(state, id) {

@@ -16,6 +16,8 @@ import {
   nextDeadline,
   parseTimeOfDay,
   recoveryDue,
+  removeSchedules,
+  repairScheduleTimes,
   scaledNow,
   tick,
 } from '../lib/clock.mjs'
@@ -172,8 +174,8 @@ test('日程完成后不再触发', () => {
 })
 
 test('日程 id 重复或未知时大声失败', () => {
-  const state = addSchedule(createClockState(0), { id: 's1', at: 1, intent: 'x' })
-  assert.throws(() => addSchedule(state, { id: 's1', at: 2, intent: 'y' }), RangeError)
+  const state = addSchedule(createClockState(0), { id: 's1', at: 1e12, intent: 'x' })
+  assert.throws(() => addSchedule(state, { id: 's1', at: 1e12 + 1, intent: 'y' }), RangeError)
   assert.throws(() => addSchedule(state, { id: 's2', at: Number.NaN }), RangeError)
   assert.throws(() => completeSchedule(state, 'nope'), RangeError)
 })
@@ -296,4 +298,34 @@ test('parseTimeOfDay：HH:MM 解析与大声失败', () => {
   assert.throws(() => parseTimeOfDay('24:00'), RangeError)
   assert.throws(() => parseTimeOfDay('3:30'), RangeError)
   assert.throws(() => parseTimeOfDay('abc'), RangeError)
+})
+
+test('addSchedule 拒绝秒级时间戳', () => {
+  const state = createClockState(local(2026, 11, 19, 23, 0))
+  assert.throws(() => addSchedule(state, { id: 'sec', at: 1795129500, intent: 'x' }), /13 位/)
+})
+
+test('repairScheduleTimes 修正秒级并清掉误标 missed', () => {
+  const now = local(2026, 11, 19, 23, 0)
+  const state = {
+    ...createClockState(now),
+    schedule: [{ id: 'sec', at: 1795129500, intent: 'x', done: false, missed: true }],
+  }
+  const { state: repaired, repaired: count } = repairScheduleTimes(state, now)
+  assert.equal(count, 1)
+  assert.equal(repaired.schedule[0].at, 1795129500000)
+  assert.equal(repaired.schedule[0].missed, false)
+})
+
+test('removeSchedules 删除指定 id 并报告缺失', () => {
+  const now = local(2026, 11, 19, 23, 0)
+  let state = createClockState(now)
+  state = addSchedule(state, { id: 'a', at: now + 60_000, intent: 'x' })
+  state = addSchedule(state, { id: 'b', at: now + 120_000, intent: 'y' })
+  const result = removeSchedules(state, ['a', 'z'])
+  assert.deepEqual(result.removed, ['a'])
+  assert.deepEqual(result.missing, ['z'])
+  assert.equal(result.state.schedule.length, 1)
+  assert.equal(result.state.schedule[0].id, 'b')
+  assert.throws(() => removeSchedules(state, []), RangeError)
 })

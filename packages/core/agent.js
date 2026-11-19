@@ -49,19 +49,37 @@ export function apply(ctx) {
 
   ctx.tools.register(tool({
     name: 'living_plan',
-    description: 'Add schedule items. at is epoch milliseconds; intent is what to do.',
+    description: 'Add schedule items. at is epoch milliseconds (13 digits); never pass seconds. intent is what to do.',
     parameters: objectSchema({
       items: {
         type: 'array',
         description: 'Schedule items.',
         items: objectSchema({
           id: { type: 'string' },
-          at: { type: 'number' },
+          at: { type: 'number', description: 'Epoch milliseconds (13 digits).' },
           intent: { type: 'string' },
         }, ['id', 'at', 'intent']),
       },
     }, ['items']),
     run: async (args) => JSON.stringify(await living.plan(args.items), null, 2),
+  }))
+
+  ctx.tools.register(tool({
+    name: 'living_schedule',
+    description: 'Read your schedule, sorted by time. includeDone=false returns only pending items.',
+    parameters: objectSchema({
+      includeDone: { type: 'boolean', description: 'Include done/missed items.' },
+    }),
+    run: async (args) => JSON.stringify(await living.schedule({ includeDone: args.includeDone === true }), null, 2),
+  }))
+
+  ctx.tools.register(tool({
+    name: 'living_unschedule',
+    description: 'Remove schedule items by id (cancel a pending item or clean up done/missed ones).',
+    parameters: objectSchema({
+      ids: { type: 'array', items: { type: 'string' }, description: 'Schedule ids to remove.' },
+    }, ['ids']),
+    run: async (args) => JSON.stringify(await living.unschedule(args.ids), null, 2),
   }))
 
   ctx.tools.register(tool({

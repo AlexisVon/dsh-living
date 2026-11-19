@@ -133,7 +133,9 @@ export function createRuntime({
   if (storedClock.lastConsolidationAt == null) storedClock.lastConsolidationAt = storedClock.lastNapAt ?? 0
   delete storedClock.napDay
   delete storedClock.lastNapAt
-  let clockState = storedClock
+  const repairedClock = clock.repairScheduleTimes(storedClock, now())
+  if (repairedClock.repaired > 0) logger.warn?.(`living: 修正 ${repairedClock.repaired} 条秒级日程时间戳`)
+  let clockState = repairedClock.state
   let budgetState = store.getState('budget') ?? budget.createBudgetState(now(), budgetCfg)
   let eventCursor = store.getState('events.cursor') ?? 0
   let roundOrigin = null
@@ -2482,6 +2484,36 @@ export function createRuntime({
         for (const item of items ?? []) clockState = clock.addSchedule(clockState, item)
         await persist()
         return clockState.schedule
+      },
+      schedule: ({ includeDone = true } = {}) => {
+        const nowMs = now()
+        return (clockState.schedule ?? [])
+          .slice()
+          .sort((left, right) => left.at - right.at)
+          .filter((item) => includeDone || (!item.done && !item.missed))
+          .map((item) => ({
+            id: item.id,
+            at: item.at,
+            time: new Date(item.at).toLocaleString('zh-CN', { hour12: false }),
+            intent: item.intent,
+            done: item.done,
+            missed: item.missed,
+            overdue: !item.done && !item.missed && item.at < nowMs,
+          }))
+      },
+      unschedule: async (ids) => {
+        const result = clock.removeSchedules(clockState, ids)
+        clockState = result.state
+        if (result.removed.length) {
+          await store.appendEvent({
+            kind: 'schedule_cancelled',
+            ts: now(),
+            source: 'living',
+            payload: { ids: result.removed },
+          })
+          await persist()
+        }
+        return { removed: result.removed, missing: result.missing }
       },
       sleep,
       manualSleep,

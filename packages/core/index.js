@@ -585,7 +585,7 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
       } catch (error) {
         logger.warn?.(`living: 主会话解档失败 ${stored.id}: ${error.message}`)
       }
-      try {
+      const tryResume = async () => {
         handle = await ctx.agents.resume({
           resumeSessionId: stored.id,
           agentOptions: agentOptions(),
@@ -597,9 +597,29 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
         rememberSessionTitle(handle.agent)
         logger.log?.(`living: 主会话已恢复 ${sessionId}${currentTitle ? `（${currentTitle}）` : ''}`)
         return handle.agent
+      }
+      try {
+        return await tryResume()
       } catch (error) {
         if (signal?.aborted) throw error
-        logger.warn?.(`living: 主会话恢复失败（${stored.id}），改用新会话: ${error.message}`)
+        handle = null
+        if (/active write handle/i.test(error.message)) {
+          logger.warn?.(`living: 主会话被 UI/其他消费者占用（${stored.id}），归档后重试: ${error.message}`)
+          try {
+            await setArchived(stored.id, true)
+          } catch {}
+          await new Promise((resolve) => setTimeout(resolve, 800))
+          try {
+            const agent = await tryResume()
+            await setArchived(stored.id, false)
+            return agent
+          } catch (retryError) {
+            if (signal?.aborted) throw retryError
+            logger.warn?.(`living: 主会话仍被占用（${stored.id}），改用新会话: ${retryError.message}`)
+          }
+        } else {
+          logger.warn?.(`living: 主会话恢复失败（${stored.id}），改用新会话: ${error.message}`)
+        }
       }
     }
     return createAgent(signal)

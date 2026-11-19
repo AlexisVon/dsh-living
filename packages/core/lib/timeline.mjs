@@ -30,6 +30,7 @@ const EVENT_CATEGORIES = {
   round_suppressed: 'system',
   round_resumed: 'system',
   schedule_missed: 'system',
+  schedule_cancelled: 'system',
   raw_fallback: 'system',
 }
 
@@ -47,6 +48,7 @@ function eventTitle(event) {
   }
   if (event.kind === 'agent_mark') return `自写节点${payload.tag ? ` · ${payload.tag}` : ''}`
   if (event.kind === 'consolidation') return `整理 · ${payload.kind ?? '?'}`
+  if (event.kind === 'schedule_cancelled') return `取消日程 · ${(payload.ids ?? []).join(', ')}`
   if (event.kind === 'sleep') {
     const minutes = Math.max(0, Math.round((Number(payload.durationMs) || 0) / 60000))
     return `睡眠 · ${payload.trigger === 'manual' ? '手动' : '夜睡'} · ${minutes} 分钟${payload.ok === false ? ' · 失败' : ''}`
