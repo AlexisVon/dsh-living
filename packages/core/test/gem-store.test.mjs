@@ -8,6 +8,7 @@ import {
   catalogStatus,
   installGem,
   loadGemCatalog,
+  resolveLatestVersion,
   scanStoreGems,
   uninstallGem,
   validateGemCatalog,
@@ -21,11 +22,41 @@ function temp(t) {
   return dir
 }
 
-function writeGem(dir, { id = 'testgem', packageName = 'dsh-gem-test', version = '0.1.0' } = {}) {
+function writeGem(dir, { id = 'testgem', packageName = 'dsh-gem-test', version = '0.1.0', engines } = {}) {
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'worldgem.json'), JSON.stringify({ id, name: '测试宝石', version, skill: 'SKILL.md' }))
+  const manifest = { id, name: '测试宝石', version, skill: 'SKILL.md', ...(engines ? { engines } : {}) }
+  writeFileSync(join(dir, 'worldgem.json'), JSON.stringify(manifest))
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: packageName, version }))
   writeFileSync(join(dir, 'SKILL.md'), '# 测试宝石\n')
+}
+
+function useFakeNpm(t, root, fixtures) {
+  const bin = join(root, 'bin')
+  mkdirSync(bin, { recursive: true })
+  const npm = join(bin, 'npm')
+  writeFileSync(npm, `#!/bin/sh
+prefix=""; spec=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prefix) prefix="$2"; shift 2 ;;
+    --registry) shift 2 ;;
+    --*) shift ;;
+    *) spec="$1"; shift ;;
+  esac
+done
+version="\${spec##*@}"
+mkdir -p "$prefix/node_modules/dsh-gem-test"
+cp -R "$FIXTURES/$version"/. "$prefix/node_modules/dsh-gem-test/"
+`)
+  chmodSync(npm, 0o755)
+  const previousPath = process.env.PATH
+  const previousFixtures = process.env.FIXTURES
+  process.env.PATH = `${bin}:${previousPath}`
+  process.env.FIXTURES = fixtures
+  t.after(() => {
+    process.env.PATH = previousPath
+    process.env.FIXTURES = previousFixtures
+  })
 }
 
 const entry = { id: 'testgem', name: '测试宝石', package: 'dsh-gem-test', version: '0.1.0' }
@@ -55,9 +86,15 @@ test('扫描、状态、卸载：删代码与 media，保留配置', async (t) =
   assert.equal(scan.gems[0].manifest.id, 'testgem')
   assert.deepEqual(scan.errors, [])
 
-  const [status] = catalogStatus({ version: 1, gems: [entry] }, { storeDir, gemDataDir })
+  const [status] = await catalogStatus({ version: 1, gems: [entry] }, {
+    storeDir,
+    gemDataDir,
+    resolveLatest: async () => '0.1.1',
+  })
   assert.equal(status.installed, true)
   assert.equal(status.installedVersion, '0.1.0')
+  assert.equal(status.targetVersion, '0.1.1')
+  assert.equal(status.updateAvailable, true)
   assert.equal(status.hasMedia, true)
 
   const result = await uninstallGem({ id: 'testgem', storeDir, gemDataDir, logger: silent })
@@ -68,40 +105,96 @@ test('扫描、状态、卸载：删代码与 media，保留配置', async (t) =
   assert.equal(scanStoreGems(storeDir).gems.length, 0)
 })
 
+test('resolveLatestVersion：解析 npm view 的数组 JSON', { skip: process.platform === 'win32' }, async (t) => {
+  const root = temp(t)
+  const bin = join(root, 'bin')
+  mkdirSync(bin, { recursive: true })
+  const npm = join(bin, 'npm')
+  writeFileSync(npm, '#!/bin/sh\necho \'["0.9.9"]\'\n')
+  chmodSync(npm, 0o755)
+  const previousPath = process.env.PATH
+  process.env.PATH = `${bin}:${previousPath}`
+  t.after(() => { process.env.PATH = previousPath })
+
+  const version = await resolveLatestVersion({ entry: { package: 'dsh-gem-unknown-test' } })
+  assert.equal(version, '0.9.9')
+})
+
 test('安装：调用包管理器、校验清单、记录精确版本', { skip: process.platform === 'win32' }, async (t) => {
   const root = temp(t)
   const storeDir = join(root, 'gems')
-  const fixture = join(root, 'fixture')
-  const bin = join(root, 'bin')
-  writeGem(fixture)
-  mkdirSync(bin, { recursive: true })
-  const npm = join(bin, 'npm')
-  writeFileSync(npm, `#!/bin/sh
-prefix=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --prefix) prefix="$2"; shift 2 ;;
-    --registry) shift 2 ;;
-    --*) shift ;;
-    *) shift ;;
-  esac
-done
-mkdir -p "$prefix/node_modules/dsh-gem-test"
-cp -R "$FIXTURE"/. "$prefix/node_modules/dsh-gem-test/"
-`)
-  chmodSync(npm, 0o755)
-  const previousPath = process.env.PATH
-  const previousFixture = process.env.FIXTURE
-  process.env.PATH = `${bin}:${previousPath}`
-  process.env.FIXTURE = fixture
-  t.after(() => {
-    process.env.PATH = previousPath
-    process.env.FIXTURE = previousFixture
-  })
+  const fixtures = join(root, 'fixtures')
+  writeGem(join(fixtures, '0.1.0'))
+  useFakeNpm(t, root, fixtures)
 
-  const result = await installGem({ entry, storeDir, logger: silent })
+  const result = await installGem({ entry, storeDir, resolveLatest: async () => '0.1.0', logger: silent })
   assert.equal(result.id, 'testgem')
   assert.equal(result.version, '0.1.0')
+  assert.equal(result.changed, true)
   assert.equal(existsSync(join(result.dir, 'worldgem.json')), true)
   assert.equal(scanStoreGems(storeDir).gems[0].manifest.id, 'testgem')
+})
+
+test('安装：按 registry latest 升级，保留旧版本信息', { skip: process.platform === 'win32' }, async (t) => {
+  const root = temp(t)
+  const storeDir = join(root, 'gems')
+  const fixtures = join(root, 'fixtures')
+  writeGem(join(fixtures, '0.1.0'))
+  writeGem(join(fixtures, '0.2.0'), { version: '0.2.0' })
+  writeGem(join(storeDir, 'node_modules', 'dsh-gem-test'))
+  useFakeNpm(t, root, fixtures)
+
+  const result = await installGem({
+    entry,
+    storeDir,
+    coreVersion: '0.3.13',
+    resolveLatest: async () => '0.2.0',
+    logger: silent,
+  })
+  assert.equal(result.previousVersion, '0.1.0')
+  assert.equal(result.version, '0.2.0')
+  assert.equal(result.targetVersion, '0.2.0')
+  assert.equal(result.changed, true)
+  assert.equal(scanStoreGems(storeDir).gems[0].manifest.version, '0.2.0')
+})
+
+test('安装：registry latest 低于已装时不动，不降级', async (t) => {
+  const root = temp(t)
+  const storeDir = join(root, 'gems')
+  writeGem(join(storeDir, 'node_modules', 'dsh-gem-test'), { version: '0.2.0' })
+  const previousPath = process.env.PATH
+  process.env.PATH = join(root, 'empty-bin')
+  t.after(() => { process.env.PATH = previousPath })
+
+  const result = await installGem({
+    entry,
+    storeDir,
+    resolveLatest: async () => '0.1.0',
+    logger: silent,
+  })
+  assert.equal(result.changed, false)
+  assert.equal(result.version, '0.2.0')
+  assert.equal(result.noDowngrade, true)
+})
+
+test('安装：engines 不兼容时拒绝并恢复旧版', { skip: process.platform === 'win32' }, async (t) => {
+  const root = temp(t)
+  const storeDir = join(root, 'gems')
+  const fixtures = join(root, 'fixtures')
+  writeGem(join(fixtures, '0.1.0'), { engines: { 'dsh-living': '>=0.3.0 <0.4.0' } })
+  writeGem(join(fixtures, '0.2.0'), { version: '0.2.0', engines: { 'dsh-living': '>=9.0.0 <10.0.0' } })
+  writeGem(join(storeDir, 'node_modules', 'dsh-gem-test'), { engines: { 'dsh-living': '>=0.3.0 <0.4.0' } })
+  useFakeNpm(t, root, fixtures)
+
+  await assert.rejects(
+    installGem({
+      entry,
+      storeDir,
+      coreVersion: '0.3.13',
+      resolveLatest: async () => '0.2.0',
+      logger: silent,
+    }),
+    /dsh-living/,
+  )
+  assert.equal(scanStoreGems(storeDir).gems[0].manifest.version, '0.1.0')
 })

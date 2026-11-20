@@ -62,6 +62,45 @@ test('events：缺粮/干燥剂同日去重，故障按变化触发', () => {
   assert.equal(cleared[0].meta.alarm, 'error_clear')
 })
 
+test('events：字符串错误码只在跳变时触发，重放同一跳变 id 不变', () => {
+  const state = {}
+  const day = '20261120'
+  const detail = {
+    state: {
+      food: 5, desiccantLeftDays: 30, pim: 1,
+      errorCode: 'blk_d', errorMsg: 'Food has piled up at the dispenser chute. Please clean it.',
+    },
+  }
+  const before = structuredClone(state)
+  const first = alarmEvents({ detail, config, state, device, day })
+  assert.equal(first.length, 1)
+  assert.equal(first[0].meta.alarm, 'error')
+  assert.equal(first[0].meta.error_code, 'blk_d')
+  assert.match(first[0].text, /piled up/)
+
+  const replay = alarmEvents({ detail, config, state: before, device, day })
+  assert.equal(replay[0].external_id, first[0].external_id)
+
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal(alarmEvents({ detail, config, state, device, day }).length, 0)
+  }
+
+  const cleared = alarmEvents({ detail: { state: { ...detail.state, errorCode: 0, errorMsg: '' } }, config, state, device, day })
+  assert.equal(cleared.length, 1)
+  assert.equal(cleared[0].meta.alarm, 'error_clear')
+
+  const recurring = alarmEvents({ detail, config, state, device, day })
+  assert.equal(recurring.length, 1)
+  assert.notEqual(recurring[0].external_id, first[0].external_id)
+})
+
+test('events：升级前存下的数字错误码不会重复触发', () => {
+  const state = { alarms: { errorCode: 3 } }
+  const detail = { state: { food: 5, desiccantLeftDays: 30, pim: 1, errorCode: 3, errorMsg: 'jam' } }
+  assert.equal(alarmEvents({ detail, config, state, device, day: '20261120' }).length, 0)
+  assert.equal(state.alarms.errorCode, '3')
+})
+
 test('events：电池供电低电量只在 pim=2 时触发', () => {
   const state = {}
   const battery = alarmEvents({

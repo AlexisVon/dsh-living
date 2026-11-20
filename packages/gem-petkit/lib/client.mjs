@@ -277,6 +277,26 @@ export class PetkitClient {
       },
     })
   }
+
+  async removeDailyFeed(device, day, feedTime) {
+    return this.dailyFeedChange(device, day, 'removeDailyFeed', feedTime)
+  }
+
+  async restoreDailyFeed(device, day, feedTime) {
+    return this.dailyFeedChange(device, day, 'restoreDailyFeed', feedTime)
+  }
+
+  dailyFeedChange(device, day, action, feedTime) {
+    const seconds = Number(feedTime)
+    if (!Number.isInteger(seconds) || seconds < 0 || seconds >= 86400) {
+      throw new RangeError(`停/恢复餐的时间必须是 0..86399 秒，收到 ${feedTime}`)
+    }
+    return this.request({
+      method: 'POST',
+      path: `${device.deviceType}/${action}`,
+      form: { day, deviceId: device.id, id: `s${seconds}` },
+    })
+  }
 }
 
 export { API_VERSION, DEFAULT_REGION, DEFAULT_TIMEZONE }

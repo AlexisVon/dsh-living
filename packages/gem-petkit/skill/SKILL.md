@@ -8,6 +8,8 @@
 - `petkit_history({days?, date?, includeItems?})`：按天看出粮/进食/猫出现；默认摘要，需要明细或预览链接时 `includeItems=true`。预览链接约 1 小时过期，现拉现看。
 - `petkit_media({eventId?, kind?, day?})`：看猫的图。默认最新进食图；也可传 history 里的 eventId。返回本地图片路径；工具会立即下载并解密。当前模型支持图像输入时用 `read_image` 打开；不支持时不要硬试，改用 `living_send` 把路径作为 media 发回给主人，并说明“图已发”，不要声称自己看过。一次看一张，不要批量下载。
 - `petkit_plan`：周计划。周计划不代表今天——今天某顿被停用/已出，以 `petkit_status` 的“今日餐次”为准。
+- `petkit_skip_meal({time})`：停掉**今天**某一顿计划餐（如 `"12:00"`），不改周计划。只在该餐出粮前有效；已出粮或时间已过的餐会拒绝。停完会重读记录确认 `status=1`。
+- `petkit_restore_meal({time})`：恢复今天已停的那一顿。只恢复 `status=1` 的餐；时间已过会拒绝（恢复可能立即出粮）。
 - `petkit_feed({amount})`：真正出粮，只能是 10/20/30/40/50 克。
 
 ## 大概流程
@@ -15,6 +17,7 @@
 - 主人提到猫、喂食器，或收到缺粮/离线/故障/出粮失败报警 → 先 `petkit_status`；需要细节再 `petkit_history`。
 - 主人问猫在干嘛、想看照片 → `petkit_media` 拿最新图，再用 `read_image` 打开返回的路径。
 - 主人明确要求喂 → 先看 status 的今日总量与餐次，再 `petkit_feed`；不要因为“到饭点了”就自己加餐。
+- 主人要求停掉今天某一顿（猫已经吃过、粮堆了、要换顿）→ 先 `petkit_status` 确认餐次与时间，再 `petkit_skip_meal`；改主意用 `petkit_restore_meal`。不要动周计划。
 - 其余时间不用主动汇报；日常进食不推送，想看了再拉。
 
 ## 出粮返回

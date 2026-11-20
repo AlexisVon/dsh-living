@@ -21,6 +21,7 @@ export function createAdminFetch({
   gemStoreDir = null,
   gemDataDir = null,
   gemCatalog = null,
+  coreVersion = null,
   gems = [],
   gemHomes = {},
   gemLogin = null,
@@ -37,6 +38,7 @@ export function createAdminFetch({
     gemStoreDir,
     gemDataDir,
     gemCatalog,
+    coreVersion,
     gems,
     gemHomes,
     gemLogin,
@@ -72,6 +74,7 @@ export function createAdminRpc({
   gemStoreDir = null,
   gemDataDir = null,
   gemCatalog = null,
+  coreVersion = null,
   gems = [],
   gemHomes = {},
   gemLogin = null,
@@ -232,7 +235,11 @@ export function createAdminRpc({
       }
       if (endpoint === 'gemCatalog') {
         if (!gemCatalog || !gemStoreDir || !gemDataDir) return fail('gem_store_unavailable', '宝石库不可用')
-        return ok(catalogStatus(gemCatalog, { storeDir: gemStoreDir, gemDataDir }))
+        const loadedVersions = {}
+        for (const gem of gems) {
+          if (gem.dir.startsWith(join(gemStoreDir, 'node_modules') + sep)) loadedVersions[gem.manifest.id] = gem.manifest.version
+        }
+        return ok(await catalogStatus(gemCatalog, { storeDir: gemStoreDir, gemDataDir, coreVersion, loadedVersions }))
       }
       if (endpoint === 'gemInstall') {
         if (!gemCatalog || !gemStoreDir) return fail('gem_store_unavailable', '宝石库不可用')
@@ -243,7 +250,7 @@ export function createAdminRpc({
         if (loaded && !loaded.dir.startsWith(join(gemStoreDir, 'node_modules') + sep)) {
           return fail('gem_duplicate', `宝石 ${id} 已从本地目录加载，先从 gemDirs 移除`)
         }
-        const result = await installGem({ entry, storeDir: gemStoreDir, logger: console })
+        const result = await installGem({ entry, storeDir: gemStoreDir, coreVersion, logger: console })
         const restartRequired = !loaded || loaded.dir !== result.dir || loaded.manifest.version !== result.version
         return ok({ ...result, restartRequired })
       }

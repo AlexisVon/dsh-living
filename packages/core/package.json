@@ -1,6 +1,6 @@
 {
   "name": "dsh-living",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "description": "A living agent runtime for DeepSeek Harness: clock, memory, persona, and WorldGem modules",
   "license": "MIT",
   "repository": {

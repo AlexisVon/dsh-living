@@ -1,12 +1,13 @@
 {
   "id": "petkit",
   "name": "小佩喂食器",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "engines": { "dsh-living": ">=0.3.0 <0.4.0" },
   "description": "小佩 D4H 单仓摄像头版：状态、出粮、进食记录与计划；重要异常唤醒，其余按需拉取。",
   "mcp": {
     "command": "node",
     "args": ["mcp/server.js"],
-    "tools": ["petkit_status", "petkit_history", "petkit_media", "petkit_plan", "petkit_feed"]
+    "tools": ["petkit_status", "petkit_history", "petkit_media", "petkit_plan", "petkit_skip_meal", "petkit_restore_meal", "petkit_feed"]
   },
   "event": {
     "protocol": ["ingest"],
@@ -156,6 +157,7 @@
     "喂食是物理动作：先看今日总量和计划，无明显理由不要主动加餐",
     "出粮结果未知时不要重试；先查 petkit_history 或等下一轮确认",
     "这台 D4H 没有宠物身份识别，不要声称知道是哪只猫吃的",
+    "停餐只影响今天，不改周计划；已出粮或时间已过的餐不能停，恢复过期餐可能立即出粮（工具会拒绝）",
     "日常进食与猫出现不推送；需要时用 petkit_history 主动拉",
     "预览链接约一小时过期，现拉现看，不要引用很久以前的链接",
     "缺粮、离线、故障、出粮失败会主动唤醒；其余时间不用主动汇报"

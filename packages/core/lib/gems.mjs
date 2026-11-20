@@ -3,8 +3,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { validateWorldGem } from 'dsh-living-protocol'
+import { satisfiesRange } from './semver.mjs'
 
-export function loadGem(dir, { readFile = readFileSync } = {}) {
+export function loadGem(dir, { readFile = readFileSync, coreVersion = null } = {}) {
   const root = resolve(dir)
   const manifestPath = join(root, 'worldgem.json')
   if (!existsSync(manifestPath)) throw new RangeError(`找不到 worldgem.json: ${manifestPath}`)
@@ -24,6 +25,7 @@ export function loadGem(dir, { readFile = readFileSync } = {}) {
     error.errors = result.errors
     throw error
   }
+  checkEngines(manifest, coreVersion)
 
   let skill = ''
   if (manifest.skill) {
@@ -34,6 +36,19 @@ export function loadGem(dir, { readFile = readFileSync } = {}) {
   }
 
   return { dir: root, manifest, skill }
+}
+
+/** A gem may declare engines.dsh-living (semver range); missing means legacy-compatible. */
+function checkEngines(manifest, coreVersion) {
+  const range = manifest.engines?.['dsh-living']
+  if (range === undefined) return
+  if (typeof range !== 'string' || range.trim() === '') {
+    throw new RangeError(`宝石 ${manifest.id} 的 engines.dsh-living 必须是 semver 范围字符串`)
+  }
+  if (coreVersion === null) return
+  if (!satisfiesRange(coreVersion, range)) {
+    throw new RangeError(`宝石 ${manifest.id} 需要 dsh-living ${range}，当前 ${coreVersion}`)
+  }
 }
 
 export function loadGems(dirs) {

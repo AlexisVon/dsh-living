@@ -138,6 +138,18 @@ test('feed：设备报错返回 failed', async () => {
   assert.equal(state.gemFeeds[0].status, 'failed')
 })
 
+test('feed：字符串错误码返回 failed 且保留原始码', async () => {
+  const { client, now, sleep } = harness([
+    detail({ manual: 30, real: 60 }),
+    detail({ manual: 30, real: 60, errorCode: 'blk_d' }),
+  ])
+  const state = {}
+  const result = await feedWithVerification({ client, device, amount: 10, config, state, day, now, sleep })
+  assert.equal(result.status, 'failed')
+  assert.match(result.message, /错误码 blk_d/)
+  assert.equal(state.gemFeeds[0].status, 'failed')
+})
+
 test('feed：登录态失效返回 gem_cookie_expired', async () => {
   const client = {
     detail: async () => detail({ manual: 30, real: 60 }),

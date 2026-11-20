@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.13 — 2026-11-20
+
+- `dsh-gem-petkit` 0.1.1：设备错误码按不透明 token 处理（如 `blk_d`；`0`/空为无错），修复字符串错误码经 `Number()` 变 `NaN`、导致同一故障每次轮询（120s）都重发唤醒；同一故障状态只通知一次，恢复发一条静默 `error_clear`。
+- 故障事件 `external_id` 改为 `code + errorSeq`：重放同一跳变由 core 的 `ingest_seen` 吞掉，新故障仍唤醒一次。
+- 出粮验证与 `petkit_status` 共用同一归一化，故障期间手动出粮不再误报「错误码 NaN」。
+- 宝石版本解耦：内置目录的 `version` 改为最低版本 floor，安装/升级目标 = max(floor, registry `latest`)，永不自动降级；宝石修复不必再随 core 发版。
+- 夜间睡眠新增「检查宝石更新」步骤：自动升级已装宝石到 latest，写静默事件；单个失败不打断睡眠；升级代码在下次宿主重启后生效。
+- 兼容契约：`worldgem.json` 支持 `engines.dsh-living` 版本范围，安装/加载时校验；不兼容则拒绝并恢复旧版。`dsh-gem-petkit` 0.1.1 已声明 `>=0.3.0 <0.4.0`。
+- 宝石页显示 registry 最新、可升级与待重启状态，支持手动升级。
+- `dsh-gem-petkit` 新增 `petkit_skip_meal` / `petkit_restore_meal`：只停/恢复今天某一顿计划餐（`removeDailyFeed` / `restoreDailyFeed`），不改周计划；已出粮或时间已过拒绝，恢复后重读记录确认 `status`；小佩 1514 限流有明确提示。
+- 测试：core 361 / gem-petkit 28（全仓 479）。
+
 ## 0.3.12 — 2026-11-19
 
 - 日程：`living_plan` 的 `at` 必须是 13 位 epoch 毫秒，秒级时间戳大声失败；启动时把已存的秒级值修成毫秒，并清掉因此误标的 `missed`。

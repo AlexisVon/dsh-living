@@ -1,5 +1,12 @@
 const GEM = 'petkit'
 
+/** Device error codes are opaque tokens (e.g. "blk_d"); "0" means no fault. */
+export function errorCodeKey(value) {
+  if (value === undefined || value === null) return '0'
+  const text = String(value).trim()
+  return text === '' || text === '0' ? '0' : text
+}
+
 function from(device) {
   return { id: String(device.id), name: device.name || '喂食器' }
 }
@@ -77,21 +84,23 @@ export function alarmEvents({ detail, config, state = {}, device, day, now = Dat
   state.alarms ??= {}
   const alarms = state.alarms
 
-  const errorCode = Number(snapshot.errorCode ?? 0)
-  if (errorCode !== 0 && errorCode !== alarms.errorCode) {
+  const errorCode = errorCodeKey(snapshot.errorCode)
+  const lastCode = errorCodeKey(alarms.errorCode)
+  if (errorCode !== '0' && errorCode !== lastCode) {
+    alarms.errorSeq = Number(alarms.errorSeq ?? 0) + 1
     const message = snapshot.errorMsg || snapshot.errorDetail || `错误码 ${errorCode}`
     events.push(event(device, {
       kind: 'error',
-      externalId: `petkit_alarm_error_${errorCode}_${now}`,
+      externalId: `petkit_alarm_error_${errorCode}_${alarms.errorSeq}`,
       text: `喂食器报错：${message}`,
       ts: now,
       silent: false,
       meta: { error_code: errorCode },
     }))
-  } else if (errorCode === 0 && alarms.errorCode) {
+  } else if (errorCode === '0' && lastCode !== '0') {
     events.push(event(device, {
       kind: 'error_clear',
-      externalId: `petkit_alarm_error_clear_${now}`,
+      externalId: `petkit_alarm_error_clear_${lastCode}_${alarms.errorSeq ?? 0}`,
       text: '喂食器故障已恢复',
       ts: now,
       silent: true,

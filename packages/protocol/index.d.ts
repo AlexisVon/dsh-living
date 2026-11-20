@@ -117,6 +117,7 @@ export interface WorldGemManifest {
   id: string
   name: string
   version: string
+  engines?: { 'dsh-living'?: string }
   description?: string
   mcp?: McpDeclaration
   event?: EventDeclaration

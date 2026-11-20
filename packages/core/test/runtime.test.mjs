@@ -42,7 +42,7 @@ function baseConfig(over = {}) {
   }
 }
 
-async function setup(t, { config = {}, runner = null, adjudicate = null, rotateSession = null, evolvePersona = null, extractMemory = null, recollector = null, embedder = null, clock = { now: NOW }, gems = [], seed = {}, wakeSchedule = () => {} } = {}) {
+async function setup(t, { config = {}, runner = null, adjudicate = null, rotateSession = null, evolvePersona = null, extractMemory = null, recollector = null, embedder = null, upgradeGems = null, clock = { now: NOW }, gems = [], seed = {}, wakeSchedule = () => {} } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'living-runtime-'))
   const store = createStore({ path: join(home, 'life.db'), now: () => clock.now })
   for (const [key, value] of Object.entries(seed)) await store.setState(key, value)
@@ -58,6 +58,7 @@ async function setup(t, { config = {}, runner = null, adjudicate = null, rotateS
     extractMemory,
     recollector,
     embedder,
+    upgradeGems,
     now: () => clock.now,
     rng: () => 0,
     logger: { error: () => {}, warn: () => {} },
@@ -477,6 +478,33 @@ test('night 一次处理完全部 pending raw，再用结果演化', async (t) =
   assert.equal(evolved, 1)
   assert.equal(calls.length, 3)
   assert.equal(store.countRawSegments({ status: 'pending' }), 0)
+})
+
+test('night 自动检查宝石更新：变更写 silent 事件，失败不打断睡眠', async (t) => {
+  let mode = 'ok'
+  const upgradeGems = async () => {
+    if (mode === 'throw') throw new Error('registry_down')
+    return [
+      { id: 'petkit', changed: true, version: '0.1.1', previousVersion: '0.1.0', latestVersion: '0.1.1' },
+      { id: 'wechat', changed: false, version: '0.2.0', previousVersion: '0.2.0', latestVersion: '0.2.0' },
+      { id: 'bili', error: 'network' },
+    ]
+  }
+  const evolvePersona = async () => ({ ok: true, text: 'SELF', tokens: 1 })
+  const { rt, store } = await setup(t, { upgradeGems, evolvePersona })
+
+  const night = await rt.sleep('night')
+  assert.equal(night.gemUpgrades.length, 3)
+  const [change] = store.listEvents({ kind: 'change', limit: 10 })
+  assert.equal(change.payload.meta.silent, true)
+  assert.deepEqual(change.payload.meta.gems, ['petkit'])
+  assert.match(change.payload.text, /0\.1\.0→0\.1\.1/)
+  assert.ok(store.getState('gems.lastUpgrade'))
+  assert.ok(store.getState('gems.lastUpgradeError'))
+
+  mode = 'throw'
+  const second = await rt.sleep('night')
+  assert.match(second.gemUpgrades[0].error, /registry_down/)
 })
 
 test('手动 sleep 可选不限制 token：预算耗尽也清空 raw 并演化', async (t) => {

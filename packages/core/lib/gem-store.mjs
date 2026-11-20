@@ -4,15 +4,19 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { loadGem } from './gems.mjs'
+import { chooseTargetVersion, compareSemver } from './semver.mjs'
 
 const CATALOG_URL = new URL('../gems/catalog.json', import.meta.url)
 const DEFAULT_TIMEOUT_MS = 120_000
+const LATEST_TIMEOUT_MS = 8_000
+const LATEST_TTL_MS = 5 * 60_000
 const MAX_OUTPUT_BYTES = 128 * 1024
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/u
 const PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/u
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 const inFlight = new Map()
 const storeLocks = new Map()
+const latestCache = new Map()
 
 export function loadGemCatalog(file = CATALOG_URL) {
   return validateGemCatalog(JSON.parse(readFileSync(file, 'utf8')))
@@ -63,7 +67,7 @@ export function findStoreGem(storeDir, id) {
 }
 
 /** Scan installed packages for worldgem.json; broken manifests are reported, not hidden. */
-export function scanStoreGems(storeDir, { loadGemFn = loadGem } = {}) {
+export function scanStoreGems(storeDir, { loadGemFn = loadGem, coreVersion = null } = {}) {
   const modules = join(storeDir, 'node_modules')
   if (!existsSync(modules)) return { gems: [], errors: [] }
   const dirs = []
@@ -87,7 +91,7 @@ export function scanStoreGems(storeDir, { loadGemFn = loadGem } = {}) {
   for (const dir of dirs) {
     if (!existsSync(join(dir, 'worldgem.json'))) continue
     try {
-      gems.push(loadGemFn(dir))
+      gems.push(loadGemFn(dir, { coreVersion }))
     } catch (error) {
       errors.push({ dir, message: error.message })
     }
@@ -96,63 +100,165 @@ export function scanStoreGems(storeDir, { loadGemFn = loadGem } = {}) {
   return { gems, errors }
 }
 
-export function catalogStatus(catalog, { storeDir, gemDataDir }) {
-  return catalog.gems.map((entry) => {
+export async function catalogStatus(catalog, {
+  storeDir,
+  gemDataDir,
+  coreVersion = null,
+  loadedVersions = {},
+  resolveLatest = resolveLatestVersion,
+} = {}) {
+  return Promise.all(catalog.gems.map(async (entry) => {
     const dir = storePackageDir(storeDir, entry.package)
     const installed = existsSync(join(dir, 'worldgem.json'))
     let installedVersion = null
     let broken = null
     if (installed) {
       try {
-        const gem = loadGem(dir)
+        const gem = loadGem(dir, { coreVersion })
         if (gem.manifest.id !== entry.id) throw new RangeError(`包内 id 是 ${gem.manifest.id}，目录期望 ${entry.id}`)
         installedVersion = readInstalledVersion(dir)
       } catch (error) {
         broken = error.message
       }
     }
+    let latestVersion = null
+    let latestError = null
+    try {
+      latestVersion = await resolveLatest({ entry })
+    } catch (error) {
+      latestError = error.message
+    }
+    const { resolved, action, noDowngrade } = chooseTargetVersion({
+      installed: installedVersion,
+      floor: entry.version,
+      latest: latestVersion,
+    })
+    const loadedVersion = loadedVersions[entry.id] ?? null
     const dataDir = join(gemDataDir, entry.id)
     return {
       ...entry,
       installed,
       installedVersion,
+      latestVersion,
+      latestError,
+      targetVersion: resolved,
+      updateAvailable: action === 'upgrade',
+      noDowngrade,
+      loadedVersion,
+      restartRequired: loadedVersion !== null && installedVersion !== null && compareSemver(loadedVersion, installedVersion) !== 0,
       broken,
       dataDir,
       hasMedia: existsSync(join(dataDir, 'media')),
     }
-  })
+  }))
 }
 
-export function installGem({ entry, storeDir, timeoutMs = DEFAULT_TIMEOUT_MS, signal = null, logger = console }) {
+export async function resolveLatestVersion({ entry, timeoutMs = LATEST_TIMEOUT_MS, signal = null } = {}) {
+  const key = `${entry.registry ?? ''}|${entry.package}`
+  const cached = latestCache.get(key)
+  const nowMs = Date.now()
+  if (cached && nowMs - cached.at < LATEST_TTL_MS) return cached.version
+  const registry = entry.registry ? ['--registry', entry.registry] : []
+  const result = await runCommand('npm', ['view', `${entry.package}@latest`, 'version', '--json', ...registry], {
+    cwd: process.cwd(),
+    timeoutMs,
+    signal,
+  })
+  if (result.code !== 0) throw new Error(`读取 ${entry.package} 最新版本失败: ${tail(result.stderr || result.stdout)}`)
+  let parsed
+  try {
+    parsed = JSON.parse(result.stdout.trim())
+  } catch {
+    throw new Error(`读取 ${entry.package} 最新版本失败: npm 返回不是 JSON`)
+  }
+  const version = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed
+  if (typeof version !== 'string' || !SEMVER_RE.test(version)) {
+    throw new Error(`读取 ${entry.package} 最新版本失败: 非法版本 ${String(version)}`)
+  }
+  latestCache.set(key, { at: nowMs, version })
+  return version
+}
+
+export function installGem({
+  entry,
+  storeDir,
+  coreVersion = null,
+  resolveLatest = resolveLatestVersion,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = null,
+  logger = console,
+}) {
   const key = `${resolve(storeDir)}:${entry.package}`
   const running = inFlight.get(key)
   if (running) return running
-  const task = withStoreLock(storeDir, () => doInstall({ entry, storeDir, timeoutMs, signal, logger }))
+  const task = withStoreLock(storeDir, () => doInstall({ entry, storeDir, coreVersion, resolveLatest, timeoutMs, signal, logger }))
     .finally(() => inFlight.delete(key))
   inFlight.set(key, task)
   return task
 }
 
-async function doInstall({ entry, storeDir, timeoutMs, signal, logger }) {
+async function doInstall({ entry, storeDir, coreVersion, resolveLatest, timeoutMs, signal, logger }) {
   mkdirSync(storeDir, { recursive: true })
   const installedDir = storePackageDir(storeDir, entry.package)
+  let installedVersion = null
   if (existsSync(join(installedDir, 'worldgem.json'))) {
     try {
-      const version = readInstalledVersion(installedDir)
-      if (version === entry.version) {
-        const gem = loadGem(installedDir)
-        if (gem.manifest.id === entry.id) {
-          ensureStoreDependency(storeDir, entry.package, version)
-          return { id: entry.id, package: entry.package, version, dir: installedDir }
-        }
-      }
+      installedVersion = readInstalledVersion(installedDir)
     } catch {}
+  }
+  let latestVersion = null
+  let latestError = null
+  try {
+    latestVersion = await resolveLatest({ entry, timeoutMs: Math.min(timeoutMs, LATEST_TIMEOUT_MS), signal })
+  } catch (error) {
+    latestError = error.message
+  }
+  const { resolved, action, noDowngrade } = chooseTargetVersion({
+    installed: installedVersion,
+    floor: entry.version,
+    latest: latestVersion,
+  })
+  const head = {
+    id: entry.id,
+    package: entry.package,
+    previousVersion: installedVersion,
+    latestVersion,
+    latestError,
+    targetVersion: resolved,
+    noDowngrade,
+  }
+  if (action === 'none') {
+    const gem = loadGem(installedDir, { coreVersion })
+    if (gem.manifest.id !== entry.id) throw new RangeError(`包 ${entry.package} 的宝石 id 是 ${gem.manifest.id}，目录期望 ${entry.id}`)
+    ensureStoreDependency(storeDir, entry.package, installedVersion)
+    return { ...head, version: installedVersion, dir: installedDir, changed: false }
   }
   const manifestPath = join(storeDir, 'package.json')
   if (!existsSync(manifestPath)) {
     writeFileSync(manifestPath, `${JSON.stringify({ name: 'dsh-living-gems', private: true }, null, 2)}\n`)
   }
-  const spec = `${entry.package}@${entry.version}`
+  try {
+    await installExact({ entry, storeDir, version: resolved, timeoutMs, signal })
+  } catch (error) {
+    await restoreInstall({ entry, storeDir, installedVersion, timeoutMs, signal, error })
+    throw error
+  }
+  const dir = storePackageDir(storeDir, entry.package)
+  try {
+    const gem = loadGem(dir, { coreVersion })
+    if (gem.manifest.id !== entry.id) throw new RangeError(`包 ${entry.package} 的宝石 id 是 ${gem.manifest.id}，目录期望 ${entry.id}`)
+    const version = readInstalledVersion(dir)
+    ensureStoreDependency(storeDir, entry.package, version)
+    logger.log?.(`living: 宝石已安装 ${entry.id} ${entry.package}@${version}`)
+    return { ...head, version, dir, changed: version !== installedVersion }
+  } catch (error) {
+    await restoreInstall({ entry, storeDir, installedVersion, timeoutMs, signal, error })
+    throw error
+  }
+}
+
+async function installExact({ entry, storeDir, version, timeoutMs, signal }) {
+  const spec = `${entry.package}@${version}`
   const registry = entry.registry ? ['--registry', entry.registry] : []
   const commands = [
     { command: 'npm', args: ['install', '--prefix', storeDir, '--save', '--save-exact', '--ignore-scripts', '--no-audit', '--no-fund', ...registry, spec] },
@@ -168,19 +274,52 @@ async function doInstall({ entry, storeDir, timeoutMs, signal, logger }) {
     }
   }
   if (!result) throw new Error('找不到 npm 或 pnpm，无法安装宝石')
-  if (result.code !== 0) throw new Error(`宝石安装失败（${entry.package}@${entry.version}）: ${tail(result.stderr || result.stdout)}`)
+  if (result.code !== 0) throw new Error(`宝石安装失败（${spec}）: ${tail(result.stderr || result.stdout)}`)
+}
+
+async function restoreInstall({ entry, storeDir, installedVersion, timeoutMs, signal, error }) {
   const dir = storePackageDir(storeDir, entry.package)
-  try {
-    const gem = loadGem(dir)
-    if (gem.manifest.id !== entry.id) throw new RangeError(`包 ${entry.package} 的宝石 id 是 ${gem.manifest.id}，目录期望 ${entry.id}`)
-    const installedVersion = readInstalledVersion(dir)
-    ensureStoreDependency(storeDir, entry.package, installedVersion)
-    logger.log?.(`living: 宝石已安装 ${entry.id} ${entry.package}@${installedVersion}`)
-    return { id: entry.id, package: entry.package, version: installedVersion, dir }
-  } catch (error) {
+  if (installedVersion === null) {
     rmSync(dir, { recursive: true, force: true })
-    throw error
+    removeFromStoreManifest(storeDir, entry.package)
+    return
   }
+  try {
+    await installExact({ entry, storeDir, version: installedVersion, timeoutMs, signal })
+    ensureStoreDependency(storeDir, entry.package, installedVersion)
+    error.message = `${error.message}；已恢复 ${entry.package}@${installedVersion}`
+  } catch (restoreError) {
+    error.message = `${error.message}；恢复 ${installedVersion} 也失败：${restoreError.message}`
+  }
+}
+
+export async function upgradeInstalledGems({
+  catalog,
+  storeDir,
+  coreVersion = null,
+  resolveLatest = resolveLatestVersion,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  logger = console,
+} = {}) {
+  const results = []
+  for (const entry of catalog.gems) {
+    if (!existsSync(join(storePackageDir(storeDir, entry.package), 'worldgem.json'))) continue
+    try {
+      const result = await installGem({ entry, storeDir, coreVersion, resolveLatest, timeoutMs, logger })
+      results.push({
+        id: entry.id,
+        changed: result.changed,
+        version: result.version,
+        previousVersion: result.previousVersion,
+        latestVersion: result.latestVersion,
+        latestError: result.latestError,
+      })
+    } catch (error) {
+      logger.warn?.(`living: 宝石自动更新失败 ${entry.id}: ${error.message}`)
+      results.push({ id: entry.id, error: error.message })
+    }
+  }
+  return results
 }
 
 export function uninstallGem({ id, package: packageHint = null, storeDir, gemDataDir, logger = console }) {

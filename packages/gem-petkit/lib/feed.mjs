@@ -1,6 +1,7 @@
 import { MANUAL_FEED_VALUES } from './config.mjs'
 import { todayIn } from './client.mjs'
 import { PetkitError, isAuthError } from './errors.mjs'
+import { errorCodeKey } from './events.mjs'
 
 const PENDING_MS = 60_000
 const POLL_MS = 2000
@@ -21,7 +22,7 @@ function totals(detail) {
   return {
     manual: Number(feed.addAmountTotal ?? 0),
     real: Number(feed.realAmountTotal ?? 0),
-    errorCode: Number(detail?.state?.errorCode ?? 0),
+    errorCode: errorCodeKey(detail?.state?.errorCode),
     feeding: Number(detail?.state?.feeding ?? 0),
   }
 }
@@ -133,7 +134,7 @@ export async function feedWithVerification({
     }
     manualAfter = last.manual
     realAfter = last.real
-    if (last.errorCode !== 0) {
+    if (last.errorCode !== '0') {
       entry.status = 'failed'
       state.pendingFeedAt = 0
       return {

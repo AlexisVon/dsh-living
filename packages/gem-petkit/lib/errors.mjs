@@ -9,6 +9,7 @@ const HINTS = {
   123: '验证码不正确或已过期',
   125: '账号未注册',
   703: '设备不存在',
+  1514: '操作太频繁，稍后再试',
 }
 
 export class PetkitError extends Error {
@@ -22,4 +23,8 @@ export class PetkitError extends Error {
 
 export function isAuthError(error) {
   return error instanceof PetkitError && (error.code === 5 || error.code === 122)
+}
+
+export function isRateLimit(error) {
+  return error instanceof PetkitError && error.code === 1514
 }

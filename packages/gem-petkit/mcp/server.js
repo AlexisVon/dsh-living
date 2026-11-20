@@ -3,11 +3,13 @@ import { createInterface } from 'node:readline'
 import { PetkitClient, FEEDER_TYPES, todayIn } from '../lib/client.mjs'
 import { gemHome, loadConfig, loadCredential, saveCredential, loadDevices, loadSelected, loadFeedState, saveFeedState } from '../lib/config.mjs'
 import { feedWithVerification } from '../lib/feed.mjs'
+import { errorCodeKey } from '../lib/events.mjs'
+import { findMeal, formatClock, mealActionIssue, parseClock, summarizeMeal, waitForMealStatus } from '../lib/plan.mjs'
 import { downloadPetkitImage } from '../lib/media.mjs'
-import { isAuthError } from '../lib/errors.mjs'
+import { isAuthError, isRateLimit } from '../lib/errors.mjs'
 
 const NAME = 'dsh-gem-petkit'
-const VERSION = '0.1.0'
+const VERSION = '0.1.1'
 const PROTOCOL = '2024-11-05'
 
 const TOOLS = [
@@ -44,6 +46,28 @@ const TOOLS = [
     name: 'petkit_plan',
     description: 'Read the recurring weekly feeding plan. This is the weekly schedule; today’s one-day skips and actual dispensing are shown by petkit_status.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'petkit_skip_meal',
+    description: "Skip one of today's scheduled meals without changing the weekly plan. Use before the meal time; refuses if it already dispensed or its time has passed. Verifies the record becomes status=1. Reversible with petkit_restore_meal.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        time: { type: 'string', description: 'Meal time today in HH:MM (24-hour), e.g. "12:00".' },
+      },
+      required: ['time'],
+    },
+  },
+  {
+    name: 'petkit_restore_meal',
+    description: "Restore one of today's skipped meals. Refuses if the meal is not skipped or its time has passed, because restoring a past meal may dispense immediately.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        time: { type: 'string', description: 'Meal time today in HH:MM (24-hour), e.g. "12:00".' },
+      },
+      required: ['time'],
+    },
   },
   {
     name: 'petkit_feed',
@@ -179,7 +203,7 @@ function formatStatus(detail, records, config, device, gemState = {}) {
   lines.push(`设备：${name}（${device.deviceType}，typeCode=${device.typeCode ?? '?'}）`)
   lines.push(`连接：云接口可达；粮量 food=${state.food ?? '?'}；干燥剂 ${state.desiccantLeftDays ?? '?'} 天；电源 ${Number(state.pim) === 2 ? `电池 ${Number(state.batteryPower ?? 0) * 25}%` : '市电'}`)
   lines.push(`今日：计划 ${feed.planAmountTotal ?? '?'}g，已出 ${feed.realAmountTotal ?? '?'}g（计划 ${feed.planRealAmountTotal ?? '?'}g + 手动 ${feed.addAmountTotal ?? '?'}g），次数 ${feed.times ?? '?'}`)
-  if (Number(state.errorCode ?? 0) !== 0) lines.push(`故障：${state.errorMsg || state.errorDetail || `错误码 ${state.errorCode}`}`)
+  if (errorCodeKey(state.errorCode) !== '0') lines.push(`故障：${state.errorMsg || state.errorDetail || `错误码 ${state.errorCode}`}`)
 
   const day = todayIn(config.timezone)
   const planRecords = allFeedItems(records)
@@ -402,6 +426,46 @@ async function callTool(name, args = {}) {
     return withClient(async (client) => {
       const plan = await client.feedPlan(currentDevice())
       return text(formatPlan(plan))
+    })
+  }
+
+  if (name === 'petkit_skip_meal' || name === 'petkit_restore_meal') {
+    const action = name === 'petkit_skip_meal' ? 'skip' : 'restore'
+    return withClient(async (client, config) => {
+      const feedTime = parseClock(args.time)
+      const day = todayIn(config.timezone)
+      const device = currentDevice()
+      const records = await client.records(device, day)
+      const item = findMeal(records, feedTime)
+      if (!item) throw new Error(`今天没有 ${formatClock(feedTime)} 的计划餐；先用 petkit_status 看今日餐次`)
+      const label = summarizeMeal(item)
+      const issue = mealActionIssue({ item, feedTime, nowSeconds: currentLocalSeconds(config.timezone), action })
+      if (issue === 'already_skipped') return text(`今天 ${label} 已经是停用状态，没有改动。`)
+      if (issue === 'not_skipped') return text(`今天 ${label} 当前不是停用状态，无需恢复。`)
+      if (issue === 'already_executed') return text(`今天 ${label} 已有执行记录，不能再停。`)
+      if (issue === 'time_passed') {
+        throw new Error(action === 'skip'
+          ? `今天 ${label} 的时间已过，停喂没有意义，没有改动。`
+          : `今天 ${label} 的时间已过，恢复可能立即出粮；拒绝恢复，请直接手动喂或等下一顿。`)
+      }
+      try {
+        if (action === 'skip') await client.removeDailyFeed(device, day, feedTime)
+        else await client.restoreDailyFeed(device, day, feedTime)
+      } catch (error) {
+        if (isRateLimit(error)) throw new Error('小佩限流（1514）：停/恢复操作太频繁，等一会儿再用 petkit_status 确认，不要连续重试')
+        throw error
+      }
+      const check = await waitForMealStatus({
+        fetchRecords: () => client.records(device, day),
+        feedTime,
+        expectStatus: action === 'skip' ? 1 : 0,
+      })
+      if (check.verified) {
+        return text(action === 'skip'
+          ? `已停掉今天 ${label}，记录 status=1。只影响今天，不改周计划；可用 petkit_restore_meal 恢复。`
+          : `已恢复今天 ${label}，记录 status=0。会按周计划正常出粮。`)
+      }
+      return text(`${action === 'skip' ? '已提交停喂' : '已提交恢复'}：今天 ${label}，但今日记录还没反映（当前 status=${check.item?.status ?? '缺失'}）。不要重复调用；稍后用 petkit_status 确认。`)
     })
   }
 

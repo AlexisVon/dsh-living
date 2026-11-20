@@ -2057,7 +2057,7 @@ window.__ModuleLoader__.load({
         footer: h(Button, { variant: 'outline', onClick: onClose }, '关闭'),
       }, h('div', { className: 'living-field' },
         h('div', { className: 'living-field-help' },
-          '从 npm 下载到 living 自己的宝石目录；不会变成 DSH 插件。安装或卸载后重启宿主生效；卸载只删代码与 media 缓存，保留配置、凭据和记忆。'),
+          '从 npm 下载到 living 自己的宝石目录；不会变成 DSH 插件。夜间睡眠时自动检查已装宝石并升到 registry 最新（永不自动降级）；安装、升级或卸载后重启宿主生效；卸载只删代码与 media 缓存，保留配置、凭据和记忆。'),
         value?.length
           ? h('div', { className: 'living-chips' },
               ...value.map((entry) => h('span', { key: entry.id, className: 'living-chip' },
@@ -2067,12 +2067,16 @@ window.__ModuleLoader__.load({
         ...(value ?? []).map((entry) => h('div', { key: entry.id, className: 'living-card' },
           h('div', { className: 'living-gem-head' },
             h('span', { className: 'living-gem-name' }, `${entry.name}（${entry.id}）`),
-            h('span', { className: 'living-muted' }, `${entry.package}@${entry.version}`),
+            h('span', { className: 'living-muted' }, `${entry.package}@${entry.targetVersion ?? entry.version}`),
             Badge({
               tone: entry.installed ? 'ok' : 'muted',
               children: entry.installed ? `已安装 ${entry.installedVersion ?? ''}` : '未安装',
-            })),
+            }),
+            entry.updateAvailable ? Badge({ tone: 'warn', children: `可升级 ${entry.targetVersion}` }) : null,
+            entry.restartRequired ? Badge({ tone: 'warn', children: '重启后生效' }) : null,
+            entry.noDowngrade ? Badge({ tone: 'error', children: 'registry 低于已装' }) : null),
           entry.description ? h('div', { className: 'living-muted' }, entry.description) : null,
+          entry.latestError ? h('div', { className: 'living-muted' }, `最新版本未知：${entry.latestError}`) : null,
           h('div', { className: 'living-chips' },
             ...Object.entries(entry.capabilities ?? {}).filter(([, enabled]) => enabled).map(([key]) =>
               h('span', { key, className: 'living-chip' }, key)),
@@ -2081,6 +2085,14 @@ window.__ModuleLoader__.load({
               : null),
           entry.broken ? h('div', { className: 'living-field-error' }, entry.broken) : null,
           h('div', { className: 'living-controls' },
+            entry.installed && entry.updateAvailable
+              ? h(Button, {
+                  variant: 'primary',
+                  size: 'sm',
+                  disabled: Boolean(busy),
+                  onClick: () => setConfirm({ kind: 'install', entry }),
+                }, `升级到 ${entry.targetVersion}`)
+              : null,
             entry.installed
               ? h(Button, {
                   variant: 'outline',
@@ -2098,7 +2110,7 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'living-field' },
                 h('div', { className: 'living-field-help' },
                   confirm.kind === 'install'
-                    ? `安装 ${entry.package}@${entry.version}？会从 npm 下载；宝石的 MCP 与通道代码在宿主里运行。`
+                    ? `${entry.installed ? '升级' : '安装'} ${entry.package}@${entry.targetVersion ?? entry.version}？会从 npm 下载；宝石的 MCP 与通道代码在宿主里运行。`
                     : `卸载 ${entry.name}？只删包代码与 media 缓存，保留 config、凭据和 life.db 里的记忆。`),
                 h('div', { className: 'living-controls' },
                   h(Button, {
@@ -2106,7 +2118,7 @@ window.__ModuleLoader__.load({
                     size: 'sm',
                     disabled: Boolean(busy),
                     onClick: () => run(confirm.kind, entry),
-                  }, confirm.kind === 'install' ? '确认安装' : '确认卸载'),
+                  }, confirm.kind === 'install' ? (entry.installed ? '确认升级' : '确认安装') : '确认卸载'),
                   h(Button, { variant: 'ghost', size: 'sm', onClick: () => setConfirm(null) }, '取消')))
             : null)),
         busy ? h('div', { className: 'living-muted' }, busy) : null,

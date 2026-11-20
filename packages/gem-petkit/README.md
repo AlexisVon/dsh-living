@@ -42,6 +42,13 @@ gemTokensJson: '{"petkit":"<随机长 token>"}'
 | `batteryLowPercent` | 20 | 只在电池供电（`pim=2`）时有意义 |
 | `timezone` | Asia/Shanghai | 日期与出粮时间使用的时区 |
 
+## 停/恢复今天某一顿
+
+- `petkit_skip_meal({ time: "12:00" })`：调 `d4/removeDailyFeed`（`{day, deviceId, id: "s<秒>"}`），只影响今天，不改周计划。
+- `petkit_restore_meal({ time: "12:00" })`：调 `d4/restoreDailyFeed`，把今天已停的那顿恢复。
+- 调用前先读今日记录：只动计划餐（`s<秒>`）；已出粮的餐、时间已过的餐拒绝；恢复过期餐可能立即出粮，所以也拒绝。
+- 调用后重读记录确认 `status=1`（停）/ `status=0`（恢复）；没反映就返回未确认，不要重复调用。
+
 ## 看图
 
 `petkit_media` 下载最近一张进食/出粮预览图，解密后保存到 gem home 的 `media/`，返回绝对路径；

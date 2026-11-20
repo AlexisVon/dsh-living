@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createStore } from './lib/store.mjs'
@@ -15,7 +15,7 @@ import { gemLimits, gemNotifyPolicies, gemPresetPlugins, loadGem } from './lib/g
 import { resolveGemHomes } from './lib/gem-admin.mjs'
 import { ensureLayout } from './lib/layout.mjs'
 import { applyPendingImport } from './lib/backup.mjs'
-import { catalogStatus, installGem, loadGemCatalog, scanStoreGems, uninstallGem } from './lib/gem-store.mjs'
+import { catalogStatus, installGem, loadGemCatalog, scanStoreGems, uninstallGem, upgradeInstalledGems } from './lib/gem-store.mjs'
 import { createGemLoginSupervisor } from './lib/gem-login.mjs'
 import { createGemChannelSupervisor } from './lib/gem-channel.mjs'
 import { waitForTurn } from './lib/round.mjs'
@@ -33,6 +33,8 @@ import { ADMIN_CHANNEL, ADMIN_ENDPOINT, createAdminFetch } from './lib/rpc.mjs'
 
 export const name = 'living'
 export const inject = ['agents', 'agentPresets', 'agentDefaultModel', 'connection', 'webServer']
+
+const coreVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
 export const Config = z.object({
   // Load-time path: making it volatile would let settings orphan life.db.
@@ -93,12 +95,12 @@ export async function apply(ctx, config) {
   const gemTokens = parseJsonObject(cfg.gemTokensJson, 'gemTokensJson')
   const whitelist = parseJsonArray(cfg.whitelistJson, 'whitelistJson')
   const gemCatalog = loadGemCatalog()
-  const storeScan = scanStoreGems(gemStoreDir)
+  const storeScan = scanStoreGems(gemStoreDir, { coreVersion })
   for (const error of storeScan.errors) console.warn(`living: 宝石清单无效 ${error.dir}: ${error.message}`)
   const gems = [...storeScan.gems]
   for (const dir of cfg.gemDirs ?? []) {
     try {
-      const gem = loadGem(dir)
+      const gem = loadGem(dir, { coreVersion })
       const duplicate = gems.find((candidate) => candidate.manifest.id === gem.manifest.id)
       if (duplicate) {
         console.warn(`living: 宝石 id 重复 ${gem.manifest.id}，忽略 ${dir}（已加载 ${duplicate.dir}）`)
@@ -222,6 +224,7 @@ export async function apply(ctx, config) {
     gems,
     adjudicate,
     gemChannels: () => channelSupervisor?.snapshot() ?? [],
+    upgradeGems: () => upgradeInstalledGems({ catalog: gemCatalog, storeDir: gemStoreDir, coreVersion, logger: console }),
     runner: (args) => session.run(args),
     rotateSession: (kind) => session.rotate(kind),
     evolvePersona,
@@ -295,6 +298,7 @@ export async function apply(ctx, config) {
         gemStoreDir,
         gemDataDir: layout.gemDataDir,
         gemCatalog,
+        coreVersion,
         gems,
         gemHomes,
         gemLogin,

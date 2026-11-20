@@ -59,6 +59,7 @@ const SLEEP_STEPS = Object.freeze([
   ['capture', '采集当前会话 raw'],
   ['normalize', '整理 pending raw'],
   ['embed', '全量补齐向量索引'],
+  ['gems', '检查宝石更新'],
   ['evolve', '演化人格'],
   ['finalize', '日报与收尾'],
 ])
@@ -104,6 +105,7 @@ export function createRuntime({
   embedder = null,
   personaAvailable = () => true,
   gemChannels = () => [],
+  upgradeGems = null,
   now = Date.now,
   rng = Math.random,
   logger = console,
@@ -1048,6 +1050,37 @@ export function createRuntime({
       }
     }
 
+    let gemUpgrades = null
+    if (kind === 'night' && typeof upgradeGems === 'function') {
+      setSleepStep('gems', '检查宝石更新…')
+      try {
+        gemUpgrades = await upgradeGems()
+        const changed = gemUpgrades.filter((item) => item.changed)
+        const failed = gemUpgrades.filter((item) => item.error)
+        if (changed.length > 0) {
+          await store.setState('gems.lastUpgrade', { at: nowMs, changed })
+          await store.appendEvent({
+            kind: 'change',
+            ts: nowMs,
+            source: 'living',
+            payload: {
+              text: `系统：宝石已自动更新 ${changed.map((item) => `${item.id} ${item.previousVersion ?? '?'}→${item.version}`).join('、')}；重启宿主后生效`,
+              meta: { silent: true, system: true, gems: changed.map((item) => item.id) },
+            },
+          })
+        }
+        if (failed.length > 0) {
+          await store.setState('gems.lastUpgradeError', { at: nowMs, failed })
+          logger.warn?.(`living: 宝石自动更新失败: ${failed.map((item) => `${item.id}: ${item.error}`).join('; ')}`)
+        }
+        updateSleepDetail(`完成：更新 ${changed.length} 个${failed.length > 0 ? `，失败 ${failed.length} 个` : ''}`)
+      } catch (error) {
+        gemUpgrades = [{ error: error.message }]
+        logger.warn?.(`living: 宝石自动更新失败: ${error.message}`)
+        updateSleepDetail(`失败：${error.message}`)
+      }
+    }
+
     // Evolve only after raw is fully normalized; otherwise leave it to a manual UI trigger.
     let evolution = null
     if (kind === 'night') {
@@ -1140,6 +1173,7 @@ export function createRuntime({
         rawPending,
         extractTokens: normalized.extractTokens ?? 0,
         embedIndex,
+        gemUpgrades,
         evolution: evolution ? (evolution.ok ? 'ok' : evolution.skipped ?? 'failed') : null,
       },
     })
@@ -1154,6 +1188,7 @@ export function createRuntime({
       rawPending,
       extractTokens: normalized.extractTokens ?? 0,
       embedIndex,
+      gemUpgrades,
       evolution: evolution ?? null,
     }
   }
