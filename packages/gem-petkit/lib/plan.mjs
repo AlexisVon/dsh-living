@@ -1,4 +1,4 @@
-/** Today's meal lookup and skip/restore guards; the weekly plan itself is read-only here. */
+/** Weekly plan formatting plus today's meal lookup and skip/restore guards. */
 
 const CLOCK_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/u
 
@@ -60,4 +60,39 @@ export async function waitForMealStatus({
     if (now() >= deadline) return { verified: false, item: last }
     await sleep(intervalMs)
   }
+}
+
+// PetKit repeats: 1=Sunday … 7=Saturday; display in ISO order (Monday first).
+const oemWeekdayToIso = (value) => (value === 1 ? 7 : value - 1)
+
+export function formatPlan(plan) {
+  const days = Array.isArray(plan?.feedDailyList) ? plan.feedDailyList : []
+  const schedule = (items) => (items ?? [])
+    .slice()
+    .sort((a, b) => Number(a.time) - Number(b.time))
+    .map((item) => `${formatClock(item.time)} ${item.amount}g${item.name ? ` ${item.name}` : ''}`)
+    .join(' / ')
+  if (days.length === 0) {
+    if (Array.isArray(plan?.items) && plan.items.length > 0) return `每周：${schedule(plan.items)}（suspended=${plan.suspended ?? 0}）`
+    return '没有读到喂食计划。'
+  }
+  const signature = (day) => JSON.stringify({ suspended: day.suspended, items: day.items })
+  const groups = []
+  for (const day of days) {
+    const key = signature(day)
+    const found = groups.find((group) => group.key === key)
+    if (found) found.days.push(Number(day.repeats))
+    else groups.push({ key, days: [Number(day.repeats)], day })
+  }
+  const weekday = ['', '一', '二', '三', '四', '五', '六', '日']
+  const lines = []
+  for (const group of groups) {
+    const isoDays = group.days.map(oemWeekdayToIso).sort((a, b) => a - b)
+    const label = isoDays.length === 7
+      ? '每天'
+      : `周${isoDays.map((value) => weekday[value] ?? value).join('、')}`
+    lines.push(`${label}${Number(group.day.suspended) === 1 ? '（已暂停）' : ''}：${schedule(group.day.items)}`)
+  }
+  lines.push('周计划不代表今天实际：一天的停喂与已出看 petkit_status。')
+  return lines.join('\n')
 }

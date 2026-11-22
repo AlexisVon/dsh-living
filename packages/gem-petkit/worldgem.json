@@ -1,7 +1,7 @@
 {
   "id": "petkit",
   "name": "小佩喂食器",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "engines": { "dsh-living": ">=0.3.0 <0.4.0" },
   "description": "小佩 D4H 单仓摄像头版：状态、出粮、进食记录与计划；重要异常唤醒，其余按需拉取。",
   "mcp": {

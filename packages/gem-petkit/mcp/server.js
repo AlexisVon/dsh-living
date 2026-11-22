@@ -4,12 +4,12 @@ import { PetkitClient, FEEDER_TYPES, todayIn } from '../lib/client.mjs'
 import { gemHome, loadConfig, loadCredential, saveCredential, loadDevices, loadSelected, loadFeedState, saveFeedState } from '../lib/config.mjs'
 import { feedWithVerification } from '../lib/feed.mjs'
 import { errorCodeKey } from '../lib/events.mjs'
-import { findMeal, formatClock, mealActionIssue, parseClock, summarizeMeal, waitForMealStatus } from '../lib/plan.mjs'
+import { findMeal, formatClock, formatPlan, mealActionIssue, parseClock, summarizeMeal, waitForMealStatus } from '../lib/plan.mjs'
 import { downloadPetkitImage } from '../lib/media.mjs'
 import { isAuthError, isRateLimit } from '../lib/errors.mjs'
 
 const NAME = 'dsh-gem-petkit'
-const VERSION = '0.1.1'
+const VERSION = '0.1.2'
 const PROTOCOL = '2024-11-05'
 
 const TOOLS = [
@@ -311,38 +311,6 @@ function formatHistoryDay(records, day, timezone, includeItems, gemFeedIds = new
       lines.push(`  - ${clockFromSeconds(item.startTime)} ${duration == null ? '进行中' : `${duration} 秒`}，${kind}${item.desc ? `：${item.desc}` : ''}${media}${event}`)
     }
   }
-  return lines.join('\n')
-}
-
-function formatPlan(plan) {
-  const days = Array.isArray(plan?.feedDailyList) ? plan.feedDailyList : []
-  const schedule = (items) => (items ?? [])
-    .slice()
-    .sort((a, b) => Number(a.time) - Number(b.time))
-    .map((item) => `${clockFromSeconds(item.time)} ${item.amount}g${item.name ? ` ${item.name}` : ''}`)
-    .join(' / ')
-  if (days.length === 0) {
-    if (Array.isArray(plan?.items) && plan.items.length > 0) return `每周：${schedule(plan.items)}（suspended=${plan.suspended ?? 0}）`
-    return '没有读到喂食计划。'
-  }
-  const signature = (day) => JSON.stringify({ suspended: day.suspended, items: day.items })
-  const groups = []
-  for (const day of days) {
-    const key = signature(day)
-    const found = groups.find((group) => group.key === key)
-    if (found) found.days.push(Number(day.repeats))
-    else groups.push({ key, days: [Number(day.repeats)], day })
-  }
-  // PetKit repeats: 1–7 = Monday–Sunday (app convention; verify on per-day plans).
-  const weekday = ['', '一', '二', '三', '四', '五', '六', '日']
-  const lines = []
-  for (const group of groups) {
-    const label = group.days.length === 7
-      ? '每天'
-      : `周${group.days.map((value) => weekday[value] ?? value).join('、')}`
-    lines.push(`${label}${Number(group.day.suspended) === 1 ? '（已暂停）' : ''}：${schedule(group.day.items)}`)
-  }
-  lines.push('周计划不代表今天实际：一天的停喂与已出看 petkit_status。')
   return lines.join('\n')
 }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## dsh-gem-petkit 0.1.2 — 2026-11-22
+
+- 周计划星期标签修正：小佩 `repeats` 为 1=周日…7=周六（OEM），原代码按 1=周一渲染，整体错一天。现在先转 ISO 再按周一到周日排序显示，周末组 `{1,7}` 正确显示为「周六、日」。
+- `formatPlan` 移入 `lib/plan.mjs` 并补测试（gem-petkit 30）。
+
 ## 0.3.14 — 2026-11-20
 
 - 睡前自由环节：sleep 的第一阶段改为主会话自己的回合（capture 之后，不注入 L0/digest）；可以写 self、写 journal、整理日程/待办，或什么都不做。删除 `<preset>-self` 无工具子 agent 与注入式 charter/journal/digest（D-39 翻案）。
