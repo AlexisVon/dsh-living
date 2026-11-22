@@ -21,7 +21,6 @@ import { createGemChannelSupervisor } from './lib/gem-channel.mjs'
 import { waitForTurn } from './lib/round.mjs'
 import { findScope } from './lib/host-scope.mjs'
 import { createAdjudicator } from './lib/adjudicator.mjs'
-import { createPersonaEvolver, SELF_PRESET_PLUGINS } from './lib/persona-evolve.mjs'
 import { createMemoryExtractor, MEMORY_PRESET_PLUGINS } from './lib/memory-extract.mjs'
 import { parseMemoryParams } from './lib/memory-config.mjs'
 import { createRecollector } from './lib/recollector.mjs'
@@ -54,6 +53,8 @@ export const Config = z.object({
   dailyTokens: z.number().default(2000000).extra('volatile', true),
   dailyRounds: z.number().default(96).extra('volatile', true),
   roundTokens: z.number().min(500000).max(800000).default(700000).extra('volatile', true),
+  /** Independent hard cap for the sleep free phase; bypasses dailyTokens/dailyRounds/HOLD. */
+  selfBudgetTokens: z.number().default(8_000_000).extra('volatile', true),
   /** Deprecated: replaced by the auto-wake grid; kept so old profiles still load. */
   selfWakeLimit: z.number().default(12).extra('volatile', true),
   autoWakeGridMinutes: z.number().default(10).extra('volatile', true),
@@ -160,23 +161,6 @@ export async function apply(ctx, config) {
       })
     : null
 
-  const selfPresetId = `${cfg.presetId}-self`
-  let selfPresetReady = false
-  const evolvePersonaRaw = createPersonaEvolver(ctx, {
-    home: cfg.home,
-    workspace,
-    presetId: selfPresetId,
-    logger: console,
-    archive: (sessionId) => archiveSession(ctx, sessionId),
-    setup: async (agentCtx) => {
-      await ctx.agentPresets.mount(agentCtx, selfPresetId)
-      restrictAllTools(agentCtx, '人格演化')
-    },
-  })
-  const evolvePersona = (input) => (selfPresetReady
-    ? evolvePersonaRaw(input)
-    : Promise.resolve({ ok: false, tokens: 0, error: '人格演化 preset 未就绪' }))
-
   const memoryPresetId = `${cfg.presetId}-memory`
   let memoryPresetReady = false
   const extractMemoryRaw = createMemoryExtractor(ctx, {
@@ -227,10 +211,8 @@ export async function apply(ctx, config) {
     upgradeGems: () => upgradeInstalledGems({ catalog: gemCatalog, storeDir: gemStoreDir, coreVersion, logger: console }),
     runner: (args) => session.run(args),
     rotateSession: (kind) => session.rotate(kind),
-    evolvePersona,
     extractMemory,
     recollector,
-    personaAvailable: () => selfPresetReady,
     config: {
       l0Tokens: cfg.l0Tokens,
       memoryParams,
@@ -240,7 +222,7 @@ export async function apply(ctx, config) {
       gemSilenceMinutes: cfg.gemSilenceMinutes,
       clock: { autoWake, nightAtMinutes, nightWindowMinutes },
       startupRound: cfg.startupRound,
-      budget: { dailyTokens: cfg.dailyTokens, dailyRounds: cfg.dailyRounds, roundTokens: cfg.roundTokens },
+      budget: { dailyTokens: cfg.dailyTokens, dailyRounds: cfg.dailyRounds, roundTokens: cfg.roundTokens, selfBudgetTokens: cfg.selfBudgetTokens },
       gemTokens,
       gemLimits: gemLimits(gems),
       gemNotify: gemNotifyPolicies(gems),
@@ -330,15 +312,6 @@ export async function apply(ctx, config) {
     ctx.effect(() => () => disposeLimiterPreset?.().catch(() => {}))
   }
 
-  let disposeSelfPreset = null
-  try {
-    disposeSelfPreset = await registerSelfPreset(ctx, selfPresetId)
-    selfPresetReady = true
-  } catch (error) {
-    console.error(`living: 人格演化 preset 注册失败，演化不可用: ${error.message}`)
-  }
-  ctx.effect(() => () => disposeSelfPreset?.().catch(() => {}))
-
   let disposeMemoryPreset = null
   try {
     disposeMemoryPreset = await registerMemoryPreset(ctx, memoryPresetId)
@@ -426,6 +399,7 @@ function normalizeConfig(config) {
     dailyTokens: value(config.dailyTokens, 2000000),
     dailyRounds: value(config.dailyRounds, 96),
     roundTokens: value(config.roundTokens, 700000),
+    selfBudgetTokens: Math.max(0, Number(value(config.selfBudgetTokens, 8_000_000)) || 0),
     selfWakeLimit: value(config.selfWakeLimit, 12),
     autoWakeGridMinutes: value(config.autoWakeGridMinutes, 10),
     autoWakeSampleSeconds: value(config.autoWakeSampleSeconds, 30),
@@ -691,7 +665,7 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
     else await setArchived(sessionId, true)
   }
 
-  async function run({ prompt, signal, contextGuardTokens }) {
+  async function run({ prompt, signal, contextGuardTokens, tokenLimit = null }) {
     if (busy) throw new Error('living: 主会话正忙')
     busy = true
     try {
@@ -703,7 +677,7 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
       let onAbort = null
       try {
         // Subscribe before followup: a fast turn can start and end synchronously.
-        const done = waitForTurn(agent, signal, { contextGuardTokens: contextGuardTokens ?? roundTokens })
+        const done = waitForTurn(agent, signal, { contextGuardTokens: contextGuardTokens ?? roundTokens, tokenLimit })
         // Registered after waitForTurn so its abort rejection wins; cancel then
         // winds the live turn down before settle() asks the registry to archive.
         onAbort = () => agent.cancel({ kind: 'hook', reason: 'round_timeout' })
@@ -780,18 +754,6 @@ async function registerLimiterPreset(ctx, presetId) {
     plugins: [...LIMITER_PRESET_PLUGINS],
   })
   console.log(`living: 限制层 preset 已注册（${presetId}）`)
-  return dispose
-}
-
-async function registerSelfPreset(ctx, presetId) {
-  const dispose = await ctx.agentPresets.register({
-    id: presetId,
-    name: 'Living self',
-    description: 'Persona evolution; no tools',
-    order: 92,
-    plugins: [...SELF_PRESET_PLUGINS],
-  })
-  console.log(`living: 人格演化 preset 已注册（${presetId}）`)
   return dispose
 }
 

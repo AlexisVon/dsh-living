@@ -34,6 +34,7 @@ $.home missing required value (at home)
     l0Tokens: 3000
     memoryParamsJson: '{}'        # 记忆策略覆盖，见 2.1；volatile，改后即时生效
     dailyTokens: 2000000
+    selfBudgetTokens: 8000000    # 睡前自由环节独立硬顶；日预算耗尽也允许一次；0 = 关闭
     roundTokens: 700000          # 上下文保险 = 1M 的 70%（可选 500k–800k）
     autoWakeGridMinutes: 10
     autoWakeSampleSeconds: 30
@@ -75,7 +76,8 @@ $.home missing required value (at home)
 
 - `nightAt`：本地 `HH:MM`，默认 `03:30`；每天一次，触发后开始夜间整理。
 - `nightWindowMinutes`：默认 `360`；错过触发点后仍可补睡的窗口，超时跳过当晚。
-- 没有固定睡眠时长；实际耗时记录在 `state['sleep.last']`（开始/结束/毫秒/成功）并写 `sleep` 事件，状态页显示“上次睡眠 X 分钟”。
+- 没有固定睡眠时长；实际耗时记录在 `state['sleep.last']`（开始/结束/毫秒/成功/自由环节结果）并写 `sleep` 事件，状态页显示“上次睡眠 X 分钟”。
+- `selfBudgetTokens`：睡前自由环节的独立硬顶，默认 `8000000`。它绕过日预算/轮次/HOLD，只计 token、不计轮次；调用前按上次上下文预估，回合内累计超限即中断。`0` 关闭自由环节；手动睡勾选“不限制 token”时也绕过硬顶。
 - 配置页「作息与自动唤醒」：实线是触发点，虚框是可触发窗口；图上不画时长。
 
 ## 3. 模型路由必须配好

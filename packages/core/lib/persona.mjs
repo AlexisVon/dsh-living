@@ -104,6 +104,13 @@ export async function writeSelf(store, text, { now = Date.now() } = {}) {
   return 'self'
 }
 
+export function cleanSelfText(text, maxChars = 6000) {
+  let value = String(text ?? '').trim()
+  value = value.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  if (value.length > maxChars) value = `${value.slice(0, Math.max(0, maxChars - 1))}…`
+  return value
+}
+
 export async function appendJournal(store, text, { now = Date.now(), tzOffsetMinutes = null, source = null } = {}) {
   if (typeof text !== 'string' || text.trim() === '') throw new RangeError('journal 内容不能为空')
   const date = dayKey(now, tzOffsetMinutes ?? -new Date().getTimezoneOffset())

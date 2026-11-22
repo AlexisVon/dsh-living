@@ -165,9 +165,6 @@ export function createAdminRpc({
       if (endpoint === 'personaEvolveMode') {
         return ok(await runtime.service().setPersonaEvolveMode(String(payload?.mode ?? '')))
       }
-      if (endpoint === 'personaEvolveNow') {
-        return ok(await runtime.service().evolvePersonaNow())
-      }
       if (endpoint === 'rounds') {
         return ok(store.listRounds({ since: payload?.since ?? null, limit: payload?.limit ?? 50 }))
       }

@@ -10,7 +10,7 @@
 |---|---|
 | 时钟 | 10–60min 网格 · 热冷时域 · 30/60s 逐点抽奖 · 日程表 · rest/夜睡 |
 | 记忆 | raw → episodes/facts+facets → 关系图三层 · 夜睡模型整理 · G1 图召回 · 降维遗忘 |
-| 人格 | `charter`（只读）· `self`（每晚重写，life.db 版本化）· `journal` |
+| 人格 | `charter`（只读）· `self`（睡前自由环节重写，life.db 版本化）· `journal` |
 | 预算与审计 | 日预算 + 上下文保险 · 外发审计 · 公网发声强制过限制层 |
 | 观测 | 锚点（8 列）· 解析器 · 每日报表（存入 life.db） |
 | WorldGem | 从 living 自己的目录加载宝石 → 挂 MCP / 绑事件端点 / 注入 skill 段 |

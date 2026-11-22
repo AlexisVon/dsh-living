@@ -401,23 +401,26 @@ living_import({ format, source, text, tags?, ts? })
 
 比按来源逐条分档更稳：**有没有可回溯的出处，决定它能不能驱动行动**（与 §7.3 同源）。
 
-### 7.7 人格自演化（实现）
+### 7.7 睡前自由环节与自主写 self
 
-`charter` 是人类写的底座（agent 只读）；`self` 由它自己在睡眠时重写。两者存 `persona_docs`，版本存 `persona_versions`。
+`charter` 是人类写的底座（agent 只读）；`self` 由主会话在睡眠的第一阶段自己写。两者存 `persona_docs`，版本存 `persona_versions`。
 
 ```
-consolidate(kind)
-  ├─ 情节/事实巩固
-  ├─ runPersonaEvolution(kind)        ← 本步
-  │    ├─ 专用 tool-free agent（<preset>-self）
-  │    ├─ 输入：charter + 当前 self + 今日 journal + L0/情节/事实/冷线索 digest
-  │    └─ 输出：新版 self → persona_docs + persona_versions（diff + 快照）
+sleep 触发
+  ├─ capture raw                      ← 先做；自由环节的消息不进 raw
+  ├─ freetime：主会话自由回合（runner；不注入 L0/digest）
+  │    ├─ living_write_self 开放：只暂存一版，后写覆盖
+  │    └─ 也可写 journal、整理日程/待办、回想，或什么都不做
+  ├─ 提交暂存 self                    → persona_docs + persona_versions（一版，diff + 快照）
+  ├─ normalize / embed / gems
   └─ rotateSession(kind)              ← 新会话下次挂载时读取新 self
 ```
 
-- 模式存在 `state['persona.evolve']`：`off` / `night`（默认）；人设页可实时切换。旧的 `all` 按 `night` 处理。
-- 演化 token 计入当日预算；自动演化在预算耗尽时跳过并写 `persona_evolve_skipped`；演化只在 sleep 内运行，不再提供独立手动触发按钮。
-- 失败保留旧 self，写 `persona_evolve_failed`；成功写 `persona_evolved {tokens, chars, version}`。
+- 窗口：任意 sleep 触发（夜睡 tick / 手动睡）都打开；无主会话时由 `runner` 新建。`persona.evolve=off` 只关 self 窗口，自由环节照跑。
+- `living_write_self` 窗口外 loud throw；窗口内只写内存暂存，回合结束统一提交；回合被超时/硬顶截断但已暂存也提交。
+- 独立硬顶 `selfBudgetTokens`（默认 8,000,000，UI 可配）：绕过 `dailyTokens` / `dailyRounds` / `BUDGET_HOLD`；tokens 记入当日账本但不计 rounds；`unlimited` 手动睡绕过硬顶；`0` 关闭该环节。
+- 没写 self 记 `persona_self_skipped`；提交失败保留旧 self；失眠（raw 剩余）与自由环节失败在状态页并列，互不阻断。
+- 状态页：睡眠进度含 `freetime` 步；上次睡眠卡显示“写 self（字数）/ 未写 / 超预算 / 失败 / 跳过”。
 - 人设页独立一页：charter 编辑（人类写）、self 手工编辑/清空、模式、版本轨迹（diff 查看/恢复）、今日 journal（`journal_entries`，按 Markdown 渲染）。占位/空 charter 会显式警告并给模板。
 - **新 self 只在下次会话挂载时生效**：系统提示词按会话捕获，当前会话仍用旧 self。
 
@@ -426,6 +429,7 @@ consolidate(kind)
 - 双闸：日预算（`dailyTokens` / `dailyRounds`）+ 上下文保险（`roundTokens`，按模型上下文 1M 的 50%–80% 选，默认 70% = 700k）
 - **上下文保险看最后一次模型调用的 input + cacheRead + output**，不是整轮累加；超限写 `context_guard`，先 handoff 再 rest + 换会话，不锁天；只有日预算耗尽才进 `BUDGET_HOLD`
 - 推送轮的预算由宝石清单 `notify.budget` 决定：`limit:false` 绕过日闸和上下文保险，`count:false` 不计 token/轮次
+- 睡前自由环节走独立硬顶 `selfBudgetTokens`（默认 8M，UI 可配）：日预算耗尽也允许一次；只计 token、不计轮次；调用前按上次上下文预估，回合内累计超限即 cancel
 - 设置页提供"重置今日用量"：清当日计数、解除 `BUDGET_HOLD`、写 `budget_reset` 审计事件；不删历史与待处理事件
 - 外发：白名单私聊 → 规则表也跳过、静默直发；其余 → 规则表（public/group 再过限制层）→ 放行或拦截，无人工待审
 - **公开可见的发声强制过限制层**（§9 `visibility: public|group`）
@@ -568,6 +572,7 @@ POST /living/outbox/out_9/ack     { "ok": true, "external_id": "dm_999" }
 允许：
 
 - `living_state` / `living_journal` / `living_mark` / `living_plan` / `living_send` / `living_web_fetch`
+- `living_write_self`（仅睡前自由环节窗口；只暂存一版，环节结束统一提交）
 - `living_recollect`（慢回想，唯一记忆查询入口） / `living_events`（只读）· `living_import`（只进不出）
 - 主 agent 不注册 `living_recall` / `living_memory_*`；`living_memory_segments|overview|scan|get` 只在回想子 agent 内可见
 - `read` / `read_image` / `write` / `edit`（写由会话 cwd 沙箱收口到 workspace 与 /tmp）

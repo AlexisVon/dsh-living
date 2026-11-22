@@ -192,6 +192,18 @@ window.__ModuleLoader__.load({
         h('span', { className: mono ? 'living-mono' : undefined }, value ?? '—'))
     }
 
+    function freetimeLabel(freetime) {
+      if (!freetime) return '—'
+      if (freetime.skipped === 'budget_estimate' && freetime.estimate) {
+        return `跳过（上下文 ${formatNumber(freetime.estimate)} > 预算 ${formatNumber(freetime.budget ?? 0)}）`
+      }
+      if (freetime.skipped) return `跳过（${freetime.skipped}）`
+      if (freetime.committed) return `写 self ${formatNumber(freetime.chars ?? 0)} 字 · ${formatNumber(freetime.tokens ?? 0)} tokens`
+      if (freetime.error) return `失败：${freetime.error}`
+      if (freetime.errorCode) return `失败：${freetime.errorCode}`
+      return `未写 self · ${formatNumber(freetime.tokens ?? 0)} tokens`
+    }
+
     function Progress({ used, limit, label }) {
       const ratio = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0
       return h('div', { className: 'living-field' },
@@ -452,9 +464,19 @@ window.__ModuleLoader__.load({
       const consolidationLabel = (c) => {
         if (!c) return '—'
         const time = c.ts ? clockTime(c.ts) : ''
-        if (c.rawPending > 0 || c.evolution === 'raw_pending') return `${time} · 失眠：raw 剩 ${c.rawPending ?? '?'}，演化跳过`
-        if (c.evolution === 'failed') return `${time} · 整理完成，演化失败`
-        return `${time} · 成功：${c.memoryItems ?? 0} 条 / ${c.memoryEdges ?? 0} 边`
+        const parts = []
+        if (c.rawPending > 0) parts.push(`失眠：raw 剩 ${c.rawPending}`)
+        else parts.push(`整理：${c.memoryItems ?? 0} 条 / ${c.memoryEdges ?? 0} 边`)
+        const freetime = c.freetime
+        if (freetime) {
+          if (freetime.skipped) parts.push(`自由环节跳过（${freetime.skipped}）`)
+          else if (freetime.committed) parts.push('self 已提交')
+          else if (freetime.budgetHit) parts.push('自由环节超预算')
+          else if (freetime.error) parts.push('self 提交失败')
+          else if (freetime.ok === false) parts.push('自由环节失败')
+          else parts.push('未写 self')
+        }
+        return `${time} · ${parts.join(' · ')}`
       }
 
       const toggleSession = () => {
@@ -562,6 +584,7 @@ window.__ModuleLoader__.load({
           line('上次睡眠', s.lastSleep?.finishedAt
             ? `${s.lastSleep.trigger === 'manual' ? '手动' : '夜睡'} ${clockTimeShort(s.lastSleep.startedAt)}–${clockTimeShort(s.lastSleep.finishedAt)}（${Math.max(1, Math.round((s.lastSleep.durationMs ?? 0) / 60000))} 分钟）`
             : '—'),
+          line('睡前自由环节', freetimeLabel(s.lastSleep?.freetime)),
           tabKeys.length > 1
             ? h('div', { className: 'living-controls living-schedule-tabs' },
                 ...tabKeys.map((key) => h(Pill, {
@@ -600,7 +623,7 @@ window.__ModuleLoader__.load({
             s.sleepProgress
               ? h(Button, { variant: 'outline', size: 'sm', onClick: () => setSleepDialog(true) }, '睡眠进度')
               : null),
-          h('div', { className: 'living-field-help' }, '立即采集当前会话、处理全部 pending raw，补齐向量索引，最后演化人格；可能几分钟，token 计入预算。')),
+          h('div', { className: 'living-field-help' }, '立即进入睡前自由环节（可写 self、journal、日程），然后采集当前会话、处理全部 pending raw 并补齐向量；可能几分钟。')),
 
         h('section', { className: 'living-card living-span-4' },
           h('div', { className: 'living-card-head' },
@@ -630,7 +653,7 @@ window.__ModuleLoader__.load({
         h(Modal, {
           open: confirmSleep,
           title: '现在睡一觉？',
-          description: '立即采集当前会话、处理全部 pending raw，并只在 raw 处理完后演化人格，然后轮换主会话。可能几分钟，token 计入预算；勾选后不因预算中断。',
+          description: '立即进入睡前自由环节（可写 self，也可整理自己的数据），然后整理记忆、补齐向量并轮换主会话。可能几分钟；自由环节走独立预算，勾选后不因预算中断。',
           closeLabel: '取消',
           onClose: () => setConfirmSleep(false),
           footer: [
@@ -815,10 +838,10 @@ window.__ModuleLoader__.load({
             h('span', null, 'Self · 它自己写的'),
             h('span', { className: 'living-muted' }, `${(selfDraft ?? '').length} / ${formatNumber(state.maxChars)} 字`)),
           h('div', { className: 'living-field-help' },
-            '每次演化会重写 self（DB）并记录一个版本（diff + 快照）；手工保存也会成为一个版本。当前会话仍用旧 self，下一次睡眠轮换后生效。'),
+            '睡前自由环节里写 self 会先暂存一版，环节结束统一写入 DB 并记录一个版本（diff + 快照）；手工保存也会成为一个版本。当前会话仍用旧 self，下一次睡眠轮换后生效。'),
           last
             ? h('div', { className: 'living-row' },
-                Badge({ tone: 'ok', children: last.kind === 'manual' ? '手动演化' : last.kind === 'all' ? '睡眠演化' : `${last.kind} 演化` }),
+                Badge({ tone: 'ok', children: last.via === 'freetime' ? '睡前自写' : last.kind === 'manual' ? '手工演化' : `${last.kind} 演化` }),
                 h('span', { className: 'living-muted' }, `${clockTime(last.ts)} · ${formatNumber(last.tokens ?? 0)} tokens · ${formatNumber(last.chars ?? 0)} 字`),
                 last.version ? h('span', { className: 'living-mono living-muted' }, shortId(last.version)) : null)
             : h('div', { className: 'living-muted' }, '还没有演化记录'),
@@ -829,7 +852,7 @@ window.__ModuleLoader__.load({
             className: 'living-textarea',
             rows: 10,
             value: selfDraft,
-            placeholder: '（还没有 self；第一次演化或手工保存后会出现在这里）',
+            placeholder: '（还没有 self；睡前自由环节或手工保存后会出现在这里）',
             onChange: (event) => {
               setSelfDraft(event.target.value)
               setSelfDirty(true)
@@ -842,8 +865,8 @@ window.__ModuleLoader__.load({
 
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' },
-            h('span', null, '演化'),
-            state.available ? Badge({ tone: 'ok', children: '演化器就绪' }) : Badge({ tone: 'warn', children: '演化器未就绪' })),
+            h('span', null, '睡前自写'),
+            state.available ? Badge({ tone: 'ok', children: '主会话就绪' }) : Badge({ tone: 'warn', children: '主会话未就绪' })),
           h('div', { className: 'living-filters' },
             ...PERSONA_MODES.map(([mode, label]) => h(Pill, {
               key: mode,
@@ -851,14 +874,14 @@ window.__ModuleLoader__.load({
               onClick: () => busy !== 'mode' && setMode(mode),
             }, label))),
           h('div', { className: 'living-field-help' },
-            '演化读取当前 charter/self、今天的 journal，以及热区/情节/事实的权重；产物写入 persona_docs 并记录版本。演化在 sleep 内运行，raw 未清空时跳过；不再单独手动触发。')),
+            '睡前自由环节由主会话自己运行：可以写 self（暂存一版，环节结束统一提交）、写 journal、整理日程/待办，或什么都不做。关闭后自由环节照跑，只是不开放 self 窗口。')),
 
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' },
             h('span', null, '轨迹'),
             h('span', { className: 'living-muted' }, versions.length > 0 ? `${versions.length} 个版本` : '还没有版本')),
           versions.length === 0
-            ? h('div', { className: 'living-muted' }, '第一次演化或手工保存后，这里会出现版本记录。')
+            ? h('div', { className: 'living-muted' }, '第一次睡前自写或手工保存后，这里会出现版本记录。')
             : h('div', { className: 'living-field' },
                 ...versions.map((version) => h('div', { key: version.id, className: 'living-version' },
                   h('div', { className: 'living-version-main' },
@@ -1308,6 +1331,7 @@ window.__ModuleLoader__.load({
           ['l0Tokens', 'L0 注入预算', 'number', 'tokens', '热区每轮最多注入多少'],
           ['dailyTokens', '日 token 上限', 'number', 'tokens', '所有计费轮次共享'],
           ['dailyRounds', '日轮次上限', 'number', '次', '计费轮次共享；豁免轮次不计'],
+          ['selfBudgetTokens', '睡前自由环节预算', 'number', 'tokens', '独立硬顶；即使日预算用完也允许，只计 token 不计轮次。0 = 关闭该环节'],
         ],
       },
       {

@@ -11,6 +11,7 @@ const EVENT_CATEGORIES = {
   agent_mark: 'agent',
   consolidation: 'sleep',
   sleep: 'sleep',
+  sleep_freetime: 'sleep',
   context_guard: 'system',
   memory_extracted: 'memory',
   memory_extract_failed: 'memory',
@@ -20,6 +21,7 @@ const EVENT_CATEGORIES = {
   persona_evolved: 'persona',
   persona_evolve_failed: 'persona',
   persona_evolve_skipped: 'persona',
+  persona_self_skipped: 'persona',
   outbound_decision: 'outbound',
   recollect: 'memory',
   outbound_approved: 'outbound',
@@ -56,7 +58,15 @@ function eventTitle(event) {
   if (event.kind === 'memory_extracted') return `记忆整理 · ${payload.items ?? 0} 条 / ${payload.edges ?? 0} 边${payload.fallback ? ' · fallback' : ''}`
   if (event.kind === 'session_handoff') return '会话交接'
   if (event.kind === 'context_guard') return '上下文保险'
-  if (event.kind === 'persona_evolved') return '人格演化'
+  if (event.kind === 'sleep_freetime') {
+    if (payload.skipped) return `睡前自由环节 · 跳过（${payload.skipped}）`
+    if (payload.committed) return `睡前自由环节 · 写 self ${payload.chars ?? 0} 字`
+    if (payload.budgetHit) return '睡前自由环节 · 超预算中断'
+    if (payload.errorCode || payload.error) return `睡前自由环节 · 失败（${payload.errorCode ?? payload.error}）`
+    return '睡前自由环节 · 未写 self'
+  }
+  if (event.kind === 'persona_self_skipped') return `未写 self · ${payload.reason ?? '?'}`
+  if (event.kind === 'persona_evolved') return '睡前自写'
   if (event.kind === 'outbound_decision') return `外发 · ${payload.decision ?? '?'}`
   if (event.kind === 'recollect') return `回想 · ${payload.ok ? '成功' : '失败'} · ${payload.scans ?? 0} 次扫描`
   if (event.kind === 'raw_fallback') return `raw 降级 · ${payload.reason ?? '?'} · ${payload.kind ?? ''}`

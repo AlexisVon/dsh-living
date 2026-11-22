@@ -13,7 +13,7 @@ import { collectMemoryItems, expandGraph, selectL0, MEMORY_EVENT_KINDS } from '.
 import { recall } from './recall.mjs'
 import { MEMORY_DEFAULTS } from './memory-config.mjs'
 import { clusterEpisodes, selectDemotions } from './consolidate.mjs'
-import { appendJournal, assemblePersona, clearSelf, readPersona, writeCharter, writeSelf } from './persona.mjs'
+import { appendJournal, assemblePersona, cleanSelfText, clearSelf, readPersona, writeCharter, writeSelf } from './persona.mjs'
 import { buildRoundPrompt, executeRound, HANDOFF_PROMPT, mapFailureCode, situationLine, triggerInstruction, TRUST_BOUNDARY, ROUND_DEFAULTS } from './round.mjs'
 import { buildSkillSection, notifyPolicyFor } from './gems.mjs'
 import { prepareImport } from './import.mjs'
@@ -57,10 +57,10 @@ const PERSONA_EVOLVE_MODES = new Set(['off', 'night'])
 const HANDOFF_TTL_MS = 24 * 3600 * 1000
 const SLEEP_STEPS = Object.freeze([
   ['capture', '采集当前会话 raw'],
+  ['freetime', '睡前自由环节'],
   ['normalize', '整理 pending raw'],
   ['embed', '全量补齐向量索引'],
   ['gems', '检查宝石更新'],
-  ['evolve', '演化人格'],
   ['finalize', '日报与收尾'],
 ])
 
@@ -99,11 +99,9 @@ export function createRuntime({
   runner = null,
   adjudicate = null,
   rotateSession = null,
-  evolvePersona = null,
   extractMemory = null,
   recollector = null,
   embedder = null,
-  personaAvailable = () => true,
   gemChannels = () => [],
   upgradeGems = null,
   now = Date.now,
@@ -120,6 +118,7 @@ export function createRuntime({
   const contextGuardTokens = Number.isFinite(Number(budgetCfg.roundTokens))
     ? Number(budgetCfg.roundTokens)
     : budget.BUDGET_DEFAULTS.roundTokens
+  const selfBudgetTokens = Math.max(0, Number(config.budget?.selfBudgetTokens ?? 8_000_000) || 0)
   const tz = clockCfg.tzOffsetMinutes ?? -new Date().getTimezoneOffset()
   const ollama = embedder ?? createOllamaEmbedder()
   let embedCfg
@@ -148,6 +147,9 @@ export function createRuntime({
   let holdAnnouncedDay = store.getState('budget.holdAnnouncedDay') ?? null
   let toolNames = []
   let sleepProgress = null
+  let selfWindow = null
+  let lastFreetime = null
+  let lastContextTokens = 0
   let status = RUNTIME_STATUS.RUNNING
   let startupDone = false
   let failures = 0
@@ -493,6 +495,7 @@ export function createRuntime({
       })
       return { ok: false, error: error.message }
     }
+    lastContextTokens = Number(result.contextTokens) || 0
     const text = String(result.text ?? '').trim()
     if (result.outcome === 'error' || text === '') {
       await store.appendEvent({
@@ -612,6 +615,7 @@ export function createRuntime({
     // The prompt above belongs to this session; later rounds are continuous.
     l0PromptSessionId = result.sessionId ?? l0PromptSessionId ?? 'unknown'
     currentSessionId = result.sessionId ?? currentSessionId
+    lastContextTokens = Number(result.contextTokens) || 0
 
     const guarded = result.errorCode === FAILURE_CODES.CONTEXT_GUARD
     if (guarded) {
@@ -907,10 +911,12 @@ export function createRuntime({
 
   async function consolidate(kind, nowMs = now(), options = {}) {
     if (kind !== 'night') return consolidateInner(kind, nowMs, options)
+    lastFreetime = null
     beginSleepProgress()
     let error = null
+    let result = null
     try {
-      const result = await consolidateInner(kind, nowMs, options)
+      result = await consolidateInner(kind, nowMs, options)
       finishSleepProgress(null)
       return result
     } catch (caught) {
@@ -926,6 +932,7 @@ export function createRuntime({
         durationMs: sleepProgress?.durationMs ?? 0,
         ok: error == null,
         error: error?.message ?? null,
+        freetime: result?.freetime ?? lastFreetime ?? null,
       }
       try {
         await store.setState('sleep.last', last)
@@ -936,7 +943,7 @@ export function createRuntime({
     }
   }
 
-  async function consolidateInner(kind, nowMs = now(), { unlimited = false } = {}) {
+  async function consolidateInner(kind, nowMs = now(), { unlimited = false, trigger = null } = {}) {
     if (kind !== 'rest' && kind !== 'night') throw new RangeError(`未知巩固类型: ${kind}`)
     if (kind === 'night') setSleepStep('capture', '采集当前会话 raw…')
     const since = clockState.lastConsolidationAt || nowMs - 24 * 3600 * 1000
@@ -978,6 +985,10 @@ export function createRuntime({
         },
       })
     }
+    const freetime = kind === 'night'
+      ? await runSleepFreetime(kind, nowMs, { manual: trigger === 'manual', unlimited })
+      : null
+
     let normalized = { items: 0, edges: 0, remaining: 0, extractTokens: 0 }
     let journalRaws = 0
     if (kind === 'night') {
@@ -1081,55 +1092,38 @@ export function createRuntime({
       }
     }
 
-    // Evolve only after raw is fully normalized; otherwise leave it to a manual UI trigger.
-    let evolution = null
-    if (kind === 'night') {
-      if (rawPending > 0) {
-        setSleepStep('evolve', 'raw 未清空，跳过演化')
-        evolution = { ok: false, skipped: 'raw_pending', pending: rawPending }
-        await store.appendEvent({
-          kind: 'persona_evolve_skipped',
-          ts: nowMs,
-          source: 'living',
-          payload: { kind, reason: 'raw_pending', pending: rawPending },
-        })
-      } else {
-        setSleepStep('evolve', '演化中…')
-        try {
-          evolution = await runPersonaEvolution(kind, nowMs, { unlimited })
-        } catch (error) {
-          logger.warn?.(`living: 人格演化失败: ${error.message}`)
-          evolution = { ok: false, error: error.message }
-        }
-      }
-    }
-
-    const sleepTrouble = rawPending > 0
-      ? `失眠：还有 ${rawPending} 条 raw 未整理，演化已跳过`
-      : evolution?.ok === false
-        ? `整理完成，但人格演化失败：${evolution.error ?? 'unknown'}`
-        : null
-    if (sleepTrouble) {
+    const troubles = []
+    if (rawPending > 0) troubles.push(`失眠：还有 ${rawPending} 条 raw 未整理`)
+    if (freetime?.budgetHit) troubles.push('睡前自由环节超出独立预算，已中断')
+    else if (freetime?.errorCode) troubles.push(`睡前自由环节失败：${freetime.errorCode}`)
+    if (freetime?.error) troubles.push(`self 提交失败：${freetime.error}`)
+    if (troubles.length > 0) {
       await store.appendEvent({
         kind: 'change',
         ts: nowMs,
         source: 'living',
         payload: {
-          text: `系统：${sleepTrouble}。可在状态页点“手动睡一觉”重试。`,
-          meta: { silent: true, system: true, sleep: rawPending > 0 ? 'insomnia' : 'evolve_failed' },
+          text: `系统：${troubles.join('；')}。可在状态页点“手动睡一觉”重试。`,
+          meta: { silent: true, system: true, sleep: rawPending > 0 ? 'insomnia' : 'freetime_failed', troubles },
         },
       })
     }
 
     if (kind === 'night') {
-      const evolveState = evolution?.ok
-        ? '演化完成'
-        : evolution?.skipped
-          ? `演化跳过（${evolution.skipped}）`
-          : evolution?.error
-            ? `演化失败：${evolution.error}`
-            : '演化未运行'
-      setSleepStep('finalize', `轮换会话与写日报…（${evolveState}）`)
+      const freetimeState = freetime?.skipped
+        ? `自由环节跳过（${freetime.skipped}）`
+        : freetime?.committed
+          ? '自由环节结束，self 已提交'
+          : freetime?.budgetHit
+            ? '自由环节超预算中断'
+            : freetime?.error
+              ? `self 提交失败：${freetime.error}`
+              : freetime?.ok
+                ? '自由环节完成，未写 self'
+                : freetime?.errorCode
+                  ? `自由环节失败：${freetime.errorCode}`
+                  : '自由环节未运行'
+      setSleepStep('finalize', `轮换会话与写日报…（${freetimeState}）`)
     }
     if (typeof rotateSession === 'function') {
       try {
@@ -1140,6 +1134,7 @@ export function createRuntime({
         // A new session has no prior L0 in context.
         l0PromptSessionId = null
         currentSessionId = null
+        lastContextTokens = 0
       }
     }
 
@@ -1174,7 +1169,9 @@ export function createRuntime({
         extractTokens: normalized.extractTokens ?? 0,
         embedIndex,
         gemUpgrades,
-        evolution: evolution ? (evolution.ok ? 'ok' : evolution.skipped ?? 'failed') : null,
+        freetime: freetime
+          ? { ok: freetime.ok === true, skipped: freetime.skipped ?? null, committed: freetime.committed === true, tokens: freetime.tokens ?? 0, budgetHit: freetime.budgetHit === true, error: freetime.error ?? null }
+          : null,
       },
     })
     await persist()
@@ -1189,7 +1186,7 @@ export function createRuntime({
       extractTokens: normalized.extractTokens ?? 0,
       embedIndex,
       gemUpgrades,
-      evolution: evolution ?? null,
+      freetime: freetime ?? null,
     }
   }
 
@@ -1508,37 +1505,6 @@ export function createRuntime({
     return PERSONA_EVOLVE_MODES.has(value) ? value : 'night'
   }
 
-  function personaDigest(nowMs) {
-    const items = collectMemoryItems(store, { now: nowMs })
-    const l0 = selectL0({
-      items,
-      cue: { text: '' },
-      budgetTokens: config.l0Tokens ?? 3000,
-      now: nowMs,
-      rng,
-      edgesFor: memoryEdgesFor,
-      tzOffsetMinutes: tz,
-      params: memoryParams,
-    }).text
-    const localDate = (ts) => (Number.isFinite(ts)
-      ? new Date(ts + tz * 60000).toISOString().slice(0, 10)
-      : '—')
-    const episodes = [...store.listEpisodes({ limit: 50 })]
-      .sort((left, right) => (right.importance ?? 0) - (left.importance ?? 0) || (right.tsStart ?? 0) - (left.tsStart ?? 0))
-      .slice(0, 12)
-      .map((episode) => `- [${localDate(episode.tsStart)}] ${episode.title}（重要 ${episode.importance}）：${String(episode.summary ?? '').slice(0, 300)}`)
-    const facts = store.listFacts({ limit: 20 })
-      .map((fact) => `- ${fact.subject} ${fact.predicate} ${fact.object}（置信 ${fact.confidence}）`)
-    const cold = store.listCold({ limit: 10 })
-      .map((hint) => `- 模糊记得：${hint.keyword}（${hint.label20 ?? ''}）`)
-    const parts = []
-    if (l0) parts.push(`### 热区\n${l0}`)
-    if (episodes.length > 0) parts.push(`### 情节\n${episodes.join('\n')}`)
-    if (facts.length > 0) parts.push(`### 事实\n${facts.join('\n')}`)
-    if (cold.length > 0) parts.push(`### 冷线索\n${cold.join('\n')}`)
-    return parts.join('\n\n').slice(0, 8000)
-  }
-
   function personaState() {
     const persona = readPersona(store, { now: now(), tzOffsetMinutes: tz })
     const evolved = store.listEvents({ kind: 'persona_evolved', limit: 1, order: 'desc' })[0] ?? null
@@ -1554,7 +1520,7 @@ export function createRuntime({
       lastEvolved: evolved ? { ts: evolved.ts, ...evolved.payload } : null,
       lastError: failed && (!evolved || failed.ts > evolved.ts) ? { ts: failed.ts, ...failed.payload } : null,
       maxChars: config.personaMaxChars ?? 6000,
-      available: typeof evolvePersona === 'function' && personaAvailable(),
+      available: typeof runner === 'function',
     }
   }
 
@@ -1564,88 +1530,133 @@ export function createRuntime({
     return personaState()
   }
 
-  async function runPersonaEvolution(kind, nowMs, { manual = false, unlimited = false } = {}) {
-    if (typeof evolvePersona !== 'function') return { ok: false, skipped: 'unavailable' }
-    const mode = personaEvolveMode()
-    if (!manual && (mode === 'off' || (mode === 'night' && kind !== 'night'))) return { ok: false, skipped: 'mode' }
-    if (!manual && !unlimited) {
-      const gate = budget.check(budgetState, nowMs, budgetCfg)
-      budgetState = gate.state
-      if (!gate.ok) {
-        await store.appendEvent({
-          kind: 'persona_evolve_skipped',
-          ts: nowMs,
-          source: 'living',
-          payload: { kind, reason: 'budget', which: gate.which },
-        })
-        await persist()
-        return { ok: false, skipped: 'budget' }
-      }
-    }
+  function openSelfWindow() {
+    selfWindow = { open: true, staged: null, calls: 0, openedAt: now() }
+  }
 
-    const persona = readPersona(store, { now: nowMs, tzOffsetMinutes: tz })
-    const journal = String(persona.journal ?? '')
-    const journalExcerpt = journal.length > 2000 ? `…（更早的见 digest）\n${journal.slice(-2000)}` : journal
-    let result
-    try {
-      result = await evolvePersona({
-        charter: persona.charter,
-        self: persona.self,
-        journal: journalExcerpt,
-        digest: personaDigest(nowMs),
-        maxChars: config.personaMaxChars ?? 6000,
+  function closeSelfWindow() {
+    const window = selfWindow
+    selfWindow = null
+    return window
+  }
+
+  function stageSelf(text) {
+    if (!selfWindow?.open) throw new RangeError('未到睡前自由环节，不能写 self')
+    const value = cleanSelfText(text, config.personaMaxChars ?? 6000)
+    if (value === '') throw new RangeError('self 不能为空')
+    selfWindow.staged = value
+    selfWindow.calls += 1
+    return { ok: true, chars: value.length, calls: selfWindow.calls }
+  }
+
+  function buildFreetimePrompt({ allowSelf }) {
+    return [
+      '现在是睡眠的开始，接下来这一段是你的自由环节。',
+      allowSelf
+        ? '你可以用 living_write_self 写一版新的 self（多次调用以最后一次为准，环节结束后统一生效），也可以写 journal、整理日程/待办、回想，或者什么都不做。'
+        : '你可以写 journal、整理日程/待办、回想，或者什么都不做。',
+      '这个环节结束后你会睡着，系统会自动整理记忆、补齐向量；这些不需要你参与。',
+      '做完你想做的就结束这一轮。',
+    ].join('\n')
+  }
+
+  async function commitSelfWindow(window, { kind, manual, tokens, outcome, errorCode }) {
+    if (!window) return { committed: false, chars: 0, version: null }
+    if (!window.staged) {
+      await store.appendEvent({
+        kind: 'persona_self_skipped',
+        ts: now(),
+        source: 'living',
+        payload: { kind, manual, reason: outcome === 'ok' ? 'declined' : 'turn_failed', tokens, outcome, errorCode },
       })
-    } catch (error) {
-      result = { ok: false, tokens: 0, error: error.message }
+      return { committed: false, chars: 0, version: null }
     }
-
-    if (!result?.ok) {
+    try {
+      await writeSelf(store, window.staged)
+      const version = await store.appendPersonaVersion({
+        kind: 'self',
+        actor: 'agent',
+        action: 'evolve',
+        message: `self write (sleep freetime${manual ? ', manual' : ''})`,
+        text: window.staged,
+        ts: now(),
+      })
+      await store.appendEvent({
+        kind: 'persona_evolved',
+        ts: now(),
+        source: 'living',
+        payload: { kind, manual, tokens, chars: window.staged.length, version: version.id, via: 'freetime' },
+      })
+      return { committed: true, chars: window.staged.length, version: version.id }
+    } catch (error) {
       await store.appendEvent({
         kind: 'persona_evolve_failed',
-        ts: nowMs,
+        ts: now(),
         source: 'living',
-        payload: { kind, manual, tokens: result?.tokens ?? 0, error: result?.error ?? 'unknown' },
+        payload: { kind, manual, tokens, error: error.message, via: 'freetime' },
       })
-      await persist()
-      return { ok: false, error: result?.error ?? 'unknown', tokens: result?.tokens ?? 0 }
+      return { committed: false, chars: 0, version: null, error: error.message }
     }
+  }
 
-    try {
-      await writeSelf(store, result.text)
-    } catch (error) {
-      await store.appendEvent({
-        kind: 'persona_evolve_failed',
-        ts: nowMs,
-        source: 'living',
-        payload: { kind, manual, tokens: result.tokens ?? 0, error: `write: ${error.message}` },
-      })
-      await persist()
-      return { ok: false, error: error.message, tokens: result.tokens ?? 0 }
-    }
-
-    budgetState = budget.consume(budgetState, nowMs, result.tokens ?? 0, budgetCfg)
-    const version = await store.appendPersonaVersion({
-      kind: 'self',
-      actor: 'agent',
-      action: 'evolve',
-      message: `self evolve ${persona.date} (${kind})`,
-      text: result.text,
-      ts: nowMs,
-    })
-    await store.appendEvent({
-      kind: 'persona_evolved',
-      ts: nowMs,
-      source: 'living',
-      payload: {
-        kind,
-        manual,
-        tokens: result.tokens ?? 0,
-        chars: result.text.length,
-        version: version.id,
-      },
-    })
+  async function skipFreetime(nowMs, { kind, manual, reason, ...extra }) {
+    setSleepStep('freetime', `跳过：${reason}`)
+    lastFreetime = { ok: false, skipped: reason, tokens: 0, manual, budget: selfBudgetTokens, ...extra }
+    await store.appendEvent({ kind: 'sleep_freetime', ts: nowMs, source: 'living', payload: lastFreetime })
     await persist()
-    return { ok: true, version, tokens: result.tokens ?? 0, text: result.text }
+    return lastFreetime
+  }
+
+  async function runSleepFreetime(kind, nowMs, { manual = false, unlimited = false } = {}) {
+    lastFreetime = null
+    if (typeof runner !== 'function') return skipFreetime(nowMs, { kind, manual, reason: 'no_runner' })
+    if (!unlimited && selfBudgetTokens <= 0) return skipFreetime(nowMs, { kind, manual, reason: 'budget_zero' })
+    if (!unlimited && lastContextTokens > 0 && lastContextTokens > selfBudgetTokens) {
+      return skipFreetime(nowMs, { kind, manual, reason: 'budget_estimate', estimate: lastContextTokens })
+    }
+    const allowSelf = personaEvolveMode() !== 'off'
+    if (allowSelf) openSelfWindow()
+    setSleepStep('freetime', allowSelf ? '自由环节中（可写 self）…' : '自由环节中（self 窗口关闭）…')
+    let result = null
+    let error = null
+    try {
+      result = await executeRound({
+        runner,
+        prompt: buildFreetimePrompt({ allowSelf }),
+        timeoutMs: config.roundTimeoutMs ?? ROUND_DEFAULTS.timeoutMs,
+        contextGuardTokens,
+        tokenLimit: unlimited ? null : selfBudgetTokens,
+      })
+    } catch (caught) {
+      error = caught
+    }
+    if (result) lastContextTokens = Number(result.contextTokens) || lastContextTokens
+    const window = closeSelfWindow()
+    const tokens = Number(result?.tokens) || 0
+    if (tokens > 0) budgetState = budget.consume(budgetState, now(), tokens, budgetCfg)
+    const commit = await commitSelfWindow(window, {
+      kind,
+      manual,
+      tokens,
+      outcome: result?.outcome ?? 'error',
+      errorCode: error ? error.message : (result?.errorCode ?? null),
+    })
+    lastFreetime = {
+      ok: error == null && result?.outcome === 'ok',
+      outcome: result?.outcome ?? 'error',
+      errorCode: error ? error.message : (result?.errorCode ?? null),
+      tokens,
+      contextTokens: result?.contextTokens ?? 0,
+      toolCalls: result?.toolCalls ?? 0,
+      calls: window?.calls ?? 0,
+      staged: Boolean(window?.staged),
+      budget: selfBudgetTokens,
+      budgetHit: result?.tokenLimitHit === true,
+      ...commit,
+    }
+    await store.appendEvent({ kind: 'sleep_freetime', ts: nowMs, source: 'living', payload: lastFreetime })
+    await persist()
+    return lastFreetime
   }
 
   function memoryEventRow(event) {
@@ -2363,6 +2374,7 @@ export function createRuntime({
           dailyTokens: budgetCfg.dailyTokens ?? budget.BUDGET_DEFAULTS.dailyTokens,
           dailyRounds: budgetCfg.dailyRounds ?? budget.BUDGET_DEFAULTS.dailyRounds,
           roundTokens: contextGuardTokens,
+          selfBudgetTokens,
         },
       },
       failures,
@@ -2390,7 +2402,7 @@ export function createRuntime({
       prelude,
       personaState,
       setPersonaEvolveMode,
-      evolvePersonaNow: () => runPersonaEvolution('manual', now(), { manual: true }),
+      stageSelf,
       personaVersion: (id) => {
         const row = store.getPersonaVersion(String(id))
         if (!row) throw new RangeError('未知 persona 版本')

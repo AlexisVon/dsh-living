@@ -42,7 +42,7 @@ function baseConfig(over = {}) {
   }
 }
 
-async function setup(t, { config = {}, runner = null, adjudicate = null, rotateSession = null, evolvePersona = null, extractMemory = null, recollector = null, embedder = null, upgradeGems = null, clock = { now: NOW }, gems = [], seed = {}, wakeSchedule = () => {} } = {}) {
+async function setup(t, { config = {}, runner = null, adjudicate = null, rotateSession = null, extractMemory = null, recollector = null, embedder = null, upgradeGems = null, clock = { now: NOW }, gems = [], seed = {}, wakeSchedule = () => {} } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'living-runtime-'))
   const store = createStore({ path: join(home, 'life.db'), now: () => clock.now })
   for (const [key, value] of Object.entries(seed)) await store.setState(key, value)
@@ -54,7 +54,6 @@ async function setup(t, { config = {}, runner = null, adjudicate = null, rotateS
     runner,
     adjudicate,
     rotateSession,
-    evolvePersona,
     extractMemory,
     recollector,
     embedder,
@@ -436,11 +435,13 @@ test('sleep 缺 session 时在轨迹写 raw_fallback', async (t) => {
   assert.ok(event.payload.messages >= 1)
 })
 
-test('night 一次处理完全部 pending raw，再用结果演化', async (t) => {
+test('night 先跑自由环节写 self，再整理全部 pending raw', async (t) => {
+  const order = []
+  let runtime = null
   const calls = []
-  let evolved = 0
   const extractMemory = async ({ segments }) => {
     calls.push(segments.map((segment) => segment.id))
+    order.push('extract')
     return {
       ok: true,
       tokens: 5,
@@ -458,11 +459,13 @@ test('night 一次处理完全部 pending raw，再用结果演化', async (t) =
       edges: [],
     }
   }
-  const evolvePersona = async () => {
-    evolved += 1
-    return { ok: true, text: 'SELF', tokens: 2 }
+  const runner = async () => {
+    order.push('freetime')
+    await runtime.service().stageSelf('SELF')
+    return { tokens: 2, outcome: 'ok' }
   }
-  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory, evolvePersona })
+  const { rt, store } = await setup(t, { runner, extractMemory })
+  runtime = rt
   for (let index = 0; index < 13; index += 1) {
     await store.appendRawSegment({
       id: `raw_journal_j${index}`,
@@ -473,9 +476,11 @@ test('night 一次处理完全部 pending raw，再用结果演化', async (t) =
     })
   }
   const night = await rt.sleep('night')
+  assert.equal(order[0], 'freetime', '自由环节先于整理')
   assert.equal(night.rawPending, 0)
-  assert.equal(night.evolution?.ok, true)
-  assert.equal(evolved, 1)
+  assert.equal(night.freetime?.committed, true)
+  assert.equal(night.freetime?.staged, true)
+  assert.equal(rt.service().personaState().self.trim(), 'SELF')
   assert.equal(calls.length, 3)
   assert.equal(store.countRawSegments({ status: 'pending' }), 0)
 })
@@ -490,8 +495,7 @@ test('night 自动检查宝石更新：变更写 silent 事件，失败不打断
       { id: 'bili', error: 'network' },
     ]
   }
-  const evolvePersona = async () => ({ ok: true, text: 'SELF', tokens: 1 })
-  const { rt, store } = await setup(t, { upgradeGems, evolvePersona })
+  const { rt, store } = await setup(t, { upgradeGems })
 
   const night = await rt.sleep('night')
   assert.equal(night.gemUpgrades.length, 3)
@@ -507,8 +511,8 @@ test('night 自动检查宝石更新：变更写 silent 事件，失败不打断
   assert.match(second.gemUpgrades[0].error, /registry_down/)
 })
 
-test('手动 sleep 可选不限制 token：预算耗尽也清空 raw 并演化', async (t) => {
-  let evolved = 0
+test('手动 sleep 可选不限制 token：预算耗尽也跑自由环节并清空 raw', async (t) => {
+  let runtime = null
   const extractMemory = async ({ segments }) => ({
     ok: true,
     tokens: 10,
@@ -525,15 +529,16 @@ test('手动 sleep 可选不限制 token：预算耗尽也清空 raw 并演化',
     }],
     edges: [],
   })
-  const evolvePersona = async () => {
-    evolved += 1
-    return { ok: true, text: 'SELF', tokens: 2 }
+  const runner = async () => {
+    await runtime.service().stageSelf('SELF')
+    return { tokens: 2, outcome: 'ok' }
   }
   const { rt, store } = await setup(t, {
+    runner,
     extractMemory,
-    evolvePersona,
     seed: { budget: { day: dayKey(NOW, TZ), tokensUsed: 1_000_000, rounds: 0 } },
   })
+  runtime = rt
   await store.appendRawSegment({
     id: 'raw_journal_unlimited',
     kind: 'journal',
@@ -545,20 +550,22 @@ test('手动 sleep 可选不限制 token：预算耗尽也清空 raw 并演化',
   assert.equal(result.ok, true)
   assert.equal(result.unlimited, true)
   assert.equal(result.rawPending, 0)
-  assert.equal(evolved, 1)
+  assert.equal(result.freetime?.committed, true)
+  assert.equal(rt.service().personaState().self.trim(), 'SELF')
   assert.equal(rt.snapshot().budget.tokensUsed, 1_000_012)
 })
 
-test('raw 卡住时跳过并记录，pending 未清空则跳过自动演化', async (t) => {
-  let evolved = 0
+test('raw 卡住时记录失眠，但自由环节的 self 仍提交', async (t) => {
+  let runtime = null
   const extractMemory = async () => {
     throw new Error('memory_extract_timeout')
   }
-  const evolvePersona = async () => {
-    evolved += 1
-    return { ok: true, text: 'SELF', tokens: 2 }
+  const runner = async () => {
+    await runtime.service().stageSelf('SELF')
+    return { tokens: 0, outcome: 'ok' }
   }
-  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory, evolvePersona })
+  const { rt, store } = await setup(t, { runner, extractMemory })
+  runtime = rt
   for (let index = 0; index < 6; index += 1) {
     await store.appendRawSegment({
       id: `raw_journal_stuck${index}`,
@@ -570,12 +577,14 @@ test('raw 卡住时跳过并记录，pending 未清空则跳过自动演化', as
   }
   const night = await rt.sleep('night')
   assert.equal(night.rawPending, 6)
-  assert.equal(night.evolution?.skipped, 'raw_pending')
-  assert.equal(evolved, 0)
-  const [skipped] = store.listEvents({ kind: 'persona_evolve_skipped', limit: 5 })
-  assert.equal(skipped.payload.reason, 'raw_pending')
+  assert.equal(night.freetime?.committed, true)
+  assert.equal(rt.service().personaState().self.trim(), 'SELF')
+  assert.equal(store.listEvents({ kind: 'persona_evolve_skipped', limit: 5 }).length, 0)
   const [failed] = store.listEvents({ kind: 'memory_extract_failed', limit: 5 })
   assert.match(failed.payload.error, /memory_extract_timeout/)
+  const [change] = store.listEvents({ kind: 'change', limit: 10 })
+  assert.match(change.payload.text, /失眠/)
+  assert.doesNotMatch(change.payload.text, /演化已跳过/)
 })
 
 test('memorySegments：自动选第一个 embedding 模型并落向量索引', async (t) => {
@@ -898,57 +907,198 @@ test('宝石 token 运行时更新：旧 token 立即失效，空 token 变未�
   assert.throws(() => rt.service().setGemToken('nope', 'x'), /未知宝石/)
 })
 
-test('夜睡演化人格：写 self、记事件、计 token', async (t) => {
-  const calls = []
-  const { rt, home, store } = await setup(t, {
-    runner: async () => ({ tokens: 0 }),
-    evolvePersona: async (input) => {
-      calls.push(input)
-      return { ok: true, text: 'EVOLVED SELF', tokens: 42 }
+test('夜睡自由环节：主会话写 self、记事件、计 token', async (t) => {
+  let runtime = null
+  const prompts = []
+  const { rt, store } = await setup(t, {
+    runner: async ({ prompt }) => {
+      prompts.push(prompt)
+      await runtime.service().stageSelf('EVOLVED SELF')
+      return { tokens: 42, outcome: 'ok' }
     },
   })
+  runtime = rt
   await store.setPersonaDoc({ kind: 'charter', text: 'CHARTER' })
   await rt.sleep('night')
-  assert.equal(calls.length, 1, '夜睡调用一次演化')
-  assert.ok(calls[0].charter.includes('CHARTER'))
+  assert.equal(prompts.length, 1, '夜睡跑一次自由环节')
+  assert.match(prompts[0], /自由环节/)
+  assert.match(prompts[0], /living_write_self/)
+  assert.doesNotMatch(prompts[0], /CHARTER/, '不再注入 charter/digest')
   assert.equal(rt.service().personaState().self.trim(), 'EVOLVED SELF')
   assert.equal(rt.snapshot().budget.tokensUsed, 42)
   const [event] = store.listEvents({ kind: 'persona_evolved', limit: 10 })
   assert.equal(event.payload.tokens, 42)
   assert.equal(event.payload.chars, 'EVOLVED SELF'.length)
+  assert.equal(event.payload.via, 'freetime')
   assert.ok(event.payload.version)
   assert.equal(rt.service().personaState().versions.length, 1)
+  const [freetime] = store.listEvents({ kind: 'sleep_freetime', limit: 10 })
+  assert.equal(freetime.payload.staged, true)
+  assert.equal(freetime.payload.committed, true)
 })
 
-test('人格演化模式 off：自动不跑，手动仍可跑', async (t) => {
-  const calls = []
+test('人格演化模式 off：自由环节照跑，self 窗口关闭', async (t) => {
+  let runtime = null
+  const prompts = []
+  let stageError = null
   const { rt, store } = await setup(t, {
-    runner: async () => ({ tokens: 0 }),
-    evolvePersona: async () => {
-      calls.push(1)
-      return { ok: true, text: 'MANUAL SELF', tokens: 7 }
+    runner: async ({ prompt }) => {
+      prompts.push(prompt)
+      try {
+        runtime.service().stageSelf('X')
+      } catch (error) {
+        stageError = error
+      }
+      return { tokens: 0, outcome: 'ok' }
     },
   })
+  runtime = rt
   await store.setPersonaDoc({ kind: 'charter', text: 'CHARTER' })
   await rt.service().setPersonaEvolveMode('off')
-  await rt.sleep('night')
-  assert.equal(calls.length, 0)
-  const manual = await rt.service().evolvePersonaNow()
-  assert.equal(manual.ok, true)
-  assert.equal(calls.length, 1)
-  assert.equal(rt.service().personaState().self.trim(), 'MANUAL SELF')
+  const night = await rt.sleep('night')
+  assert.equal(prompts.length, 1)
+  assert.doesNotMatch(prompts[0], /living_write_self/)
+  assert.match(stageError?.message ?? '', /未到睡前自由环节/)
+  assert.equal(rt.service().personaState().self.trim(), '')
+  assert.equal(night.freetime?.committed, false)
 })
 
-test('人格演化失败：保留旧 self 并写失败事件', async (t) => {
-  const { rt, home, store } = await setup(t, {
-    runner: async () => ({ tokens: 0 }),
-    evolvePersona: async () => ({ ok: false, tokens: 3, error: 'provider_timeout' }),
+test('自由环节写的 journal 在本晚进入整理', async (t) => {
+  let runtime = null
+  const batches = []
+  const extractMemory = async ({ segments }) => {
+    batches.push(...segments.map((segment) => segment.id))
+    return { ok: true, tokens: 0, items: [], edges: [] }
+  }
+  const { rt } = await setup(t, {
+    runner: async () => {
+      await runtime.service().journal('睡前写一句')
+      return { tokens: 0, outcome: 'ok' }
+    },
+    extractMemory,
   })
-  await store.setPersonaDoc({ kind: 'charter', text: 'CHARTER' })
-  await rt.sleep('night')
-  assert.equal(rt.service().personaState().self.trim(), '')
-  const [event] = store.listEvents({ kind: 'persona_evolve_failed', limit: 10 })
-  assert.equal(event.payload.error, 'provider_timeout')
+  runtime = rt
+  const night = await rt.sleep('night')
+  assert.ok(night.journalRaws >= 1)
+  assert.ok(batches.some((id) => id.startsWith('raw_journal_')))
+})
+
+test('自由环节多次暂存只提交最后一版', async (t) => {
+  let runtime = null
+  const { rt } = await setup(t, {
+    runner: async () => {
+      await runtime.service().stageSelf('FIRST')
+      await runtime.service().stageSelf('SECOND')
+      return { tokens: 0, outcome: 'ok' }
+    },
+  })
+  runtime = rt
+  const night = await rt.sleep('night')
+  assert.equal(night.freetime?.calls, 2)
+  assert.equal(rt.service().personaState().self.trim(), 'SECOND')
+  assert.equal(rt.service().personaState().versions.length, 1)
+  assert.ok(rt.snapshot().sleepProgress.steps.some((step) => step.key === 'freetime'))
+})
+
+test('自由环节不写 self：记 skipped，不产生版本', async (t) => {
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 3, outcome: 'ok' }) })
+  const night = await rt.sleep('night')
+  assert.equal(night.freetime?.committed, false)
+  assert.equal(rt.service().personaState().versions.length, 0)
+  const [skipped] = store.listEvents({ kind: 'persona_self_skipped', limit: 10 })
+  assert.equal(skipped.payload.reason, 'declined')
+  assert.equal(rt.snapshot().budget.tokensUsed, 3)
+})
+
+test('自由环节失败：保留旧 self 并记录跳过', async (t) => {
+  const { rt, store } = await setup(t, {
+    runner: async () => { throw new Error('provider_timeout') },
+  })
+  await store.setPersonaDoc({ kind: 'self', text: 'OLD' })
+  const night = await rt.sleep('night')
+  assert.equal(rt.service().personaState().self.trim(), 'OLD')
+  assert.match(night.freetime?.errorCode ?? '', /provider_timeout/)
+  const [skipped] = store.listEvents({ kind: 'persona_self_skipped', limit: 10 })
+  assert.equal(skipped.payload.reason, 'turn_failed')
+})
+
+test('自由环节独立预算：日预算耗尽仍跑，硬顶用 selfBudgetTokens', async (t) => {
+  let runtime = null
+  const limits = []
+  const { rt } = await setup(t, {
+    runner: async ({ tokenLimit }) => {
+      limits.push(tokenLimit)
+      await runtime.service().stageSelf('S')
+      return { tokens: 5, outcome: 'ok' }
+    },
+    config: {
+      budget: { tzOffsetMinutes: TZ, dailyTokens: 1000, dailyRounds: 100, roundTokens: 100, selfBudgetTokens: 555 },
+    },
+    seed: { budget: { day: dayKey(NOW, TZ), tokensUsed: 1000, rounds: 0 } },
+  })
+  runtime = rt
+  const night = await rt.sleep('night')
+  assert.deepEqual(limits, [555])
+  assert.equal(night.freetime?.ok, true)
+  assert.equal(night.freetime?.committed, true)
+  assert.equal(rt.snapshot().budget.tokensUsed, 1005)
+  assert.equal(rt.snapshot().budget.rounds, 0, '自由环节不计轮次')
+  assert.equal(rt.snapshot().budget.limits.selfBudgetTokens, 555)
+})
+
+test('selfBudgetTokens=0：自由环节跳过，睡眠继续', async (t) => {
+  let calls = 0
+  const { rt } = await setup(t, {
+    runner: async () => {
+      calls += 1
+      return { tokens: 0, outcome: 'ok' }
+    },
+    config: {
+      budget: { tzOffsetMinutes: TZ, dailyTokens: 1000, dailyRounds: 100, roundTokens: 100, selfBudgetTokens: 0 },
+    },
+  })
+  const night = await rt.sleep('night')
+  assert.equal(calls, 0)
+  assert.equal(night.freetime?.skipped, 'budget_zero')
+})
+
+test('上次上下文超过独立预算：跳过自由环节', async (t) => {
+  let calls = 0
+  const { rt } = await setup(t, {
+    runner: async () => {
+      calls += 1
+      return { tokens: 1, contextTokens: 1000, outcome: 'ok', sessionId: 's1' }
+    },
+    config: {
+      budget: { tzOffsetMinutes: TZ, dailyTokens: 1_000_000, dailyRounds: 100, roundTokens: 100_000, selfBudgetTokens: 500 },
+    },
+  })
+  await rt.tick()
+  const afterRound = calls
+  assert.ok(afterRound >= 1)
+  const night = await rt.sleep('night')
+  assert.equal(calls, afterRound, '自由环节不应再发一次调用')
+  assert.equal(night.freetime?.skipped, 'budget_estimate')
+  assert.equal(night.freetime?.estimate, 1000)
+})
+
+test('自由环节硬顶截断：已暂存的 self 仍提交', async (t) => {
+  let runtime = null
+  const { rt } = await setup(t, {
+    runner: async () => {
+      await runtime.service().stageSelf('S')
+      return { tokens: 900, outcome: 'error', errorCode: 'budget_exhausted', tokenLimitHit: true }
+    },
+    config: {
+      budget: { tzOffsetMinutes: TZ, dailyTokens: 1000, dailyRounds: 100, roundTokens: 100, selfBudgetTokens: 500 },
+    },
+  })
+  runtime = rt
+  const night = await rt.sleep('night')
+  assert.equal(night.freetime?.budgetHit, true)
+  assert.equal(night.freetime?.committed, true)
+  assert.equal(rt.service().personaState().self.trim(), 'S')
+  assert.equal(rt.snapshot().budget.tokensUsed, 900)
 })
 
 test('人设手工编辑、清空与恢复版本', async (t) => {

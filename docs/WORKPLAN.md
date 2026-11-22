@@ -303,3 +303,12 @@ M0 ── M1 ── M2 ──┬── M3 ──┐
 **B站配置**：`ownerUid` 是用户自己的 B站 uid；bot 账号是另一个号，凭据里的 `dedeuserid` 不能当主人。
 
 **@ 昵称**：信任只认 uid；评论 @ 用昵称。新增只读 `bili_user(uid)` / `bili_owner()` 现查昵称，`sendComment` 统一压掉 `@` 后的空格（B站 只认紧挨着的 `@昵称`）。
+
+## 15. R18 睡前自由环节（2026-11-20，对应 D-59）
+
+| 项 | 实现 | 验证 |
+|---|---|---|
+| 主会话自由环节 | sleep 触发后先 capture；再用 `runner` 跑一条 `freetime` 短提示，不注入 L0/digest；可写 self / journal / 日程 / 什么都不做 | `runtime.test`：自由环节先于整理；prompt 含 `living_write_self` 且不含 charter |
+| self 暂存与提交 | `living_write_self` → `stageSelf`；窗口内只暂存一版、后写覆盖；回合结束统一 `writeSelf` + 一条 `persona_versions` + `persona_evolved{via:'freetime'}`；超时/硬顶截断但已暂存也提交 | 多次暂存只留最后一版；失败保留旧 self；硬顶截断仍提交 |
+| 独立预算 | `selfBudgetTokens`（Config/UI，默认 8,000,000）；绕过 dailyTokens/dailyRounds/HOLD；tokens 进日账、不计 rounds；调用前按上次上下文预估；`unlimited` 绕过；`0` 关闭 | `round.test`：tokenLimit 累计取消；`runtime.test`：预算耗尽仍跑、0 跳过、预估跳过 |
+| 状态与清理 | `SLEEP_STEPS` 加 `freetime`；`sleep.last.freetime`；删除 `persona-evolve.mjs`、`<preset>-self`、`personaAvailable`、`personaEvolveNow` RPC、`raw_pending` 闸 | `runtime.test` / `timeline` / `rpc`；全仓测试 |

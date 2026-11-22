@@ -10,7 +10,7 @@ A runtime for an agent that **lives by its own settings**: its own schedule, mem
 
 - **Clock** — 10–60 min auto-wake grid, hot/cold time ranges, its own schedule, rest, one night sleep at 03:30 by default (configurable).
 - **Memory** — layered and shown in three ways (hot injection / warm retrieval / cold clues only); forgetting is **dimension reduction**, not deletion.
-- **Persona** — `charter` (read-only) + `self` (rewritten at night, versioned in `life.db`) + `journal`.
+- **Persona** — `charter` (read-only) + `self` (rewritten during the pre-sleep free phase, versioned in `life.db`) + `journal`.
 - **World** — WorldGem: a gem provides **capabilities** (MCP), **events** (ingest / outbox) and a **skill** that teaches the model how to use it.
 
 ## What it is not

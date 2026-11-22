@@ -38,6 +38,16 @@ export function apply(ctx) {
   }))
 
   ctx.tools.register(tool({
+    name: 'living_write_self',
+    description: 'Stage a new self.md during the sleep free phase. Only open during that phase; calling again replaces the staged text, which is committed once when the phase ends. Output the self body only.',
+    parameters: objectSchema({ text: { type: 'string', description: 'New self body.' } }, ['text']),
+    run: async (args) => {
+      const result = await living.stageSelf(args.text)
+      return `已暂存 self（${result.chars} 字）；本环节结束后统一生效。`
+    },
+  }))
+
+  ctx.tools.register(tool({
     name: 'living_mark',
     description: 'Mark one moment on your own timeline. Use it for turning points, decisions, or things you want to find later; it is not a journal entry.',
     parameters: objectSchema({

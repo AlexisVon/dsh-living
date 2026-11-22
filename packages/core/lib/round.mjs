@@ -101,11 +101,12 @@ export function triggerInstruction(decision) {
  * Resolve on the next turn/end of an agent, summing per-step usage and tool calls.
  * `agent.ctx.on('session/event')` is scoped to this agent's session.
  */
-export function waitForTurn(agent, signal, { contextGuardTokens = null } = {}) {
+export function waitForTurn(agent, signal, { contextGuardTokens = null, tokenLimit = null } = {}) {
   return new Promise((resolve, reject) => {
     const usage = { input: 0, output: 0, cacheRead: 0, total: 0 }
     let toolCalls = 0
     let guardTripped = false
+    let budgetTripped = false
     let lastCallTokens = 0
     let settled = false
     let text = ''
@@ -139,6 +140,10 @@ export function waitForTurn(agent, signal, { contextGuardTokens = null } = {}) {
             guardTripped = true
             agent.cancel({ kind: 'hook', reason: 'context_guard' })
           }
+          if (!guardTripped && !budgetTripped && Number.isFinite(tokenLimit) && tokenLimit >= 0 && usage.total > tokenLimit) {
+            budgetTripped = true
+            agent.cancel({ kind: 'hook', reason: 'self_budget' })
+          }
         }
         return
       }
@@ -155,15 +160,18 @@ export function waitForTurn(agent, signal, { contextGuardTokens = null } = {}) {
         turns: 1,
         toolCalls,
         text,
-        outcome: guardTripped ? 'error' : reason.kind === 'completed' ? 'ok' : reason.kind === 'blocked' ? 'skipped' : 'error',
+        outcome: guardTripped || budgetTripped ? 'error' : reason.kind === 'completed' ? 'ok' : reason.kind === 'blocked' ? 'skipped' : 'error',
         errorCode: guardTripped
           ? FAILURE_CODES.CONTEXT_GUARD
-          : reason.kind === 'error'
-            ? mapFailureCode(reason.error?.code)
-            : reason.kind === 'aborted'
-              ? FAILURE_CODES.PROVIDER_TIMEOUT
-              : null,
-        turnEnd: guardTripped ? 'context_guard' : reason.kind,
+          : budgetTripped
+            ? FAILURE_CODES.BUDGET_EXHAUSTED
+            : reason.kind === 'error'
+              ? mapFailureCode(reason.error?.code)
+              : reason.kind === 'aborted'
+                ? FAILURE_CODES.PROVIDER_TIMEOUT
+                : null,
+        turnEnd: guardTripped ? 'context_guard' : budgetTripped ? 'self_budget' : reason.kind,
+        tokenLimitHit: budgetTripped,
       })
     }
 
@@ -194,13 +202,13 @@ export function mapFailureCode(code) {
   return FAILURE_CODES.UNKNOWN
 }
 
-export async function executeRound({ runner, prompt, timeoutMs = ROUND_DEFAULTS.timeoutMs, contextGuardTokens = null }) {
+export async function executeRound({ runner, prompt, timeoutMs = ROUND_DEFAULTS.timeoutMs, contextGuardTokens = null, tokenLimit = null }) {
   if (typeof runner !== 'function') throw new RangeError('executeRound 需要 runner')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(new Error('round_timeout')), timeoutMs)
   timer.unref?.()
   try {
-    const result = await runner({ prompt, signal: controller.signal, contextGuardTokens })
+    const result = await runner({ prompt, signal: controller.signal, contextGuardTokens, tokenLimit })
     return { tokens: 0, contextTokens: 0, outcome: 'ok', sessionId: null, errorCode: null, ...(result ?? {}), aborted: controller.signal.aborted }
   } finally {
     clearTimeout(timer)

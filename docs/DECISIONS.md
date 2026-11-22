@@ -277,6 +277,8 @@
 
 **翻案**：人格演化成本超过日预算的 5% 时改为按需/隔夜。
 
+**翻案（D-59）**：专用无工具子 agent 与注入式输入整体推翻；self 改由主会话在睡前自由环节自主写，暂存后由框架提交，见 D-59。
+
 ### D-40 宿主重启后跑一次 startup 轮
 
 **选**：插件加载时若不在睡眠、预算允许，跑一轮 `startup`（不消费待处理事件，只校准时间轴/应用最新 prelude）；`startupRound` 默认开、可关；过期仍用 `recovery`。
@@ -447,6 +449,8 @@
 
 **翻案**：若单次 sleep 的模型成本不可接受，再加 token 预算并保留 `memory_extract_skipped`，但默认先以“清空”为目标。
 
+**翻案（D-59）**：`raw_pending` 不再阻止 self；自由环节在整理之前运行，失眠只记录、不影响 self，见 D-59。
+
 ### D-57 回想倒置：区段预测 + 子 agent 锁范围 + 可配置兜底（2026-11-19）
 
 **选**：`living_recollect` 不再收 `from`/`to`。子 agent 先调 `living_memory_segments({key})`，由 Ollama embedding 预测最多 3 个时间区段：按 6h 间隔聚类，每段宽度 ≤ `maxSegmentDays`（默认 7），置信度低于 `minConfidence`（默认 0.35）的段不返回，所以结果可以是 0–3 段。然后对每段调 `living_memory_scan({from,to})`，需要时 `living_memory_get`。embed 不可用、区段为空或段内没证据时，子 agent 扫最近 `fallbackDays` 天（默认 3，**可配置**）。子 agent 工具面收口为 segments/overview/scan/get；主 agent 只保留 `living_recollect`，不再注册 `living_recall` 与 `living_memory_*`。
@@ -472,6 +476,20 @@
 **参数化**：上述策略数值（meta 降档数、journal 折价、分级/带宽、显著度门槛、topK、半衰期、整理批大小等）由 Config `memoryParamsJson` 覆盖，volatile，改后即时生效、无需发版；越界钳制、未知键忽略、坏 JSON 大声失败。结构规则（meta 强字段判定、band 与 tie 的派生、idf/分级算法）仍在代码里，不开放。
 
 **翻案**：同档仍分不开时，先加更强的字段/位置证据（标题、首句、频次），不要再调权重；系统日志误标就改词表并补测试，不要在 recall 里加特判。
+
+### D-59 睡前自由环节：主会话自主写 self，暂存后统一提交（2026-11-20）
+
+**选**：sleep 触发（夜睡 tick / 手动睡）的第一阶段是主会话自己的**自由环节**：capture 今日 raw 之后，用 `runner` 在主会话跑一条短提示，不注入 L0/digest/事件；模型可用 `living_write_self` 写 self，也可写 journal、整理日程/待办、回想，或什么都不做。`living_write_self` 常驻工具面，窗口外 loud throw；窗口内只把文本暂存在内存（一版，后写覆盖），环节结束由框架统一 `writeSelf` + 一条 `persona_versions` + `persona_evolved{via:'freetime'}`；回合被超时/硬顶截断但已暂存也提交。自由环节后依次 normalize → embed → gems → 轮换/日报。
+
+**预算**：独立硬顶 `selfBudgetTokens`（Config，默认 8,000,000，UI 可配）。自由环节不受 `dailyTokens` / `dailyRounds` / `BUDGET_HOLD` 约束；实际 tokens 记入当日账本，但不 `startRound`；调用前按上次 `contextTokens` 预估，超额度直接跳过（`budget_estimate`）；手动 sleep 的 `unlimited` 连这个闸也跳过。`selfBudgetTokens=0` 关闭该环节。
+
+**窗口与失败**：任意 sleep 触发都开窗口；无主会话时由 `runner` 新建。回合超时沿用 `roundTimeoutMs`，上下文保险沿用 `roundTokens`。`persona.evolve=off` 只关 self 窗口，自由环节照跑。没写 self 记 `persona_self_skipped(declined)`；回合失败记 `turn_failed`；提交失败保留旧 self；失眠（raw 剩余）与自由环节失败在状态页并列显示，互不阻断。状态页睡眠进度增加 `freetime` 步，上次睡眠卡显示“写 self / 未写 / 超预算 / 失败 / 跳过”。
+
+**放弃**：专用 `<preset>-self` 无工具 agent + 注入 charter/self/journal/digest（D-39）；`raw_pending` 后才演化（D-56）；每次工具调用实时写库；用日预算/HOLD 决定 self 是否有机会；把自由环节的内容注入会话。
+
+**理由**：self 该由当天的活模型带着未压缩的会话上下文来写，而不是整理后的摘要；睡觉是自然边界，撰写与整理解耦后，失眠不再让 self 停更；暂存一版让版本轨迹干净；独立额度保证“当天预算用完了，也还有一次自省的机会”。
+
+**翻案**：若自由环节的全上下文成本不可接受，先降 `selfBudgetTokens` 或设 0，保留自由环节；若主会话写出的 self 质量不如有界子 agent，再把 digest 作为**附加输入**加回 prompt，而不是恢复子 agent。
 
 ---
 

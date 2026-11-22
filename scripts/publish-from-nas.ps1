@@ -1,14 +1,12 @@
 <#
 .SYNOPSIS
-  Publish the prebuilt dsh-living 0.3.13 / dsh-gem-petkit 0.1.1 tarballs from a folder.
+  Publish the prebuilt dsh-living 0.3.14 tarball from a folder.
 
 .DESCRIPTION
-  The tarballs are already packed; workspace:* is replaced with dsh-living-protocol@0.2.0.
-  This script never packs. It verifies the two files and optionally publishes them.
+  The tarball is already packed; workspace:* is replaced with dsh-living-protocol@0.2.0.
+  This script never packs. It verifies the file and optionally publishes it.
 
-  Without -Publish it only prints the paths; upload them yourself in this order:
-    1. dsh-gem-petkit-0.1.1.tgz
-    2. dsh-living-0.3.13.tgz
+  Without -Publish it only prints the path; upload it yourself: dsh-living-0.3.14.tgz.
 
   With -Publish it runs npm publish; the 2FA prompt appears on this machine.
   -Staged adds --staged if your npm CLI supports staged publishing.
@@ -28,18 +26,15 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $PackageDir) { $PackageDir = $PSScriptRoot }
 
-$gem = Join-Path $PackageDir 'dsh-gem-petkit-0.1.1.tgz'
-$core = Join-Path $PackageDir 'dsh-living-0.3.13.tgz'
-if (-not (Test-Path $gem)) { throw "Missing: $gem" }
+$core = Join-Path $PackageDir 'dsh-living-0.3.14.tgz'
 if (-not (Test-Path $core)) { throw "Missing: $core" }
 
-Write-Host 'Tarballs:'
-Write-Host "  $gem"
+Write-Host 'Tarball:'
 Write-Host "  $core"
 
 if (-not $Publish) {
   Write-Host ''
-  Write-Host 'Upload order: dsh-gem-petkit-0.1.1.tgz first, then dsh-living-0.3.13.tgz.'
+  Write-Host 'Upload: dsh-living-0.3.14.tgz.'
   Write-Host 'To publish from this machine: rerun with -Publish (add -Staged if supported).'
   exit 0
 }
@@ -55,19 +50,14 @@ if ($LASTEXITCODE -ne 0) {
 $publishArgs = @('publish', '--access', 'public')
 if ($Staged) { $publishArgs += '--staged' }
 
-Write-Host 'Publishing dsh-gem-petkit 0.1.1...'
-& npm @publishArgs $gem
-if ($LASTEXITCODE -ne 0) { throw 'dsh-gem-petkit publish failed' }
-
-Write-Host 'Publishing dsh-living 0.3.13...'
+Write-Host 'Publishing dsh-living 0.3.14...'
 & npm @publishArgs $core
 if ($LASTEXITCODE -ne 0) { throw 'dsh-living publish failed' }
 
 if ($Staged) {
   Write-Host ''
-  Write-Host 'Publish staged. Approve both versions with your normal 2FA flow.'
+  Write-Host 'Publish staged. Approve the version with your normal 2FA flow.'
 } else {
   Write-Host ''
-  npm view dsh-gem-petkit version
   npm view dsh-living version
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.14 — 2026-11-20
+
+- 睡前自由环节：sleep 的第一阶段改为主会话自己的回合（capture 之后，不注入 L0/digest）；可以写 self、写 journal、整理日程/待办，或什么都不做。删除 `<preset>-self` 无工具子 agent 与注入式 charter/journal/digest（D-39 翻案）。
+- `living_write_self`：仅自由环节窗口开放，窗口外大声失败；窗口内只暂存一版，后写覆盖；环节结束由框架统一写入 `persona_docs` 并记录一条 `persona_versions`（diff + 快照）。超时/硬顶截断但已暂存也提交。
+- 独立硬顶 `selfBudgetTokens`（默认 8,000,000，配置页可改）：绕过日预算/轮次/`BUDGET_HOLD`，只计 token、不计轮次；调用前按上次上下文预估，回合内累计超限即中断；`0` 关闭该环节；手动睡勾选“不限制 token”时绕过硬顶。
+- 失眠不再跳过 self；自由环节失败/超预算与失眠并列显示，互不阻断。睡眠进度新增 `freetime` 步，上次睡眠卡显示写 self / 未写 / 超预算 / 失败 / 跳过。
+- 删除 `persona-evolve.mjs`、`<preset>-self` 注册、`personaAvailable`、`personaEvolveNow` RPC 与 `raw_pending` 演化闸。
+- 测试：core 370（全仓 488）。
+
 ## 0.3.13 — 2026-11-20
 
 - `dsh-gem-petkit` 0.1.1：设备错误码按不透明 token 处理（如 `blk_d`；`0`/空为无错），修复字符串错误码经 `Number()` 变 `NaN`、导致同一故障每次轮询（120s）都重发唤醒；同一故障状态只通知一次，恢复发一条静默 `error_clear`。

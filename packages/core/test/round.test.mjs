@@ -199,6 +199,39 @@ test('waitForTurn：整轮累加超过保险但单次调用未超时不取消', 
   assert.equal(result.contextTokens, 6)
 })
 
+test('waitForTurn：整轮累计超过独立预算时取消并记 tokenLimitHit', async () => {
+  const agent = fakeAgent()
+  let cancelled = null
+  agent.cancel = (cause) => {
+    cancelled = cause
+  }
+  const done = waitForTurn(agent, null, { tokenLimit: 10 })
+  agent.emit('assistant/message', { turn: 1, step: 1, usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 } })
+  assert.equal(cancelled, null)
+  agent.emit('assistant/message', { turn: 1, step: 2, usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 } })
+  assert.deepEqual(cancelled, { kind: 'hook', reason: 'self_budget' })
+  agent.emit('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'hook', reason: 'self_budget' } } })
+  const result = await done
+  assert.equal(result.outcome, 'error')
+  assert.equal(result.errorCode, 'budget_exhausted')
+  assert.equal(result.tokenLimitHit, true)
+  assert.equal(result.tokens, 11)
+})
+
+test('executeRound：tokenLimit 透传给 runner', async () => {
+  let seen = null
+  const result = await executeRound({
+    runner: async (args) => {
+      seen = args.tokenLimit
+      return { tokens: 1 }
+    },
+    prompt: 'p',
+    tokenLimit: 123,
+  })
+  assert.equal(seen, 123)
+  assert.equal(result.tokens, 1)
+})
+
 test('waitForTurn：外部 signal 中止时拒绝', async () => {
   const agent = fakeAgent()
   const controller = new AbortController()

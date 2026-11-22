@@ -50,9 +50,9 @@ raw → normalized → edge 需要同一事务、同一备份、同一写队列�
 
 - raw 采集会同步解压 session 文件；一次 rest/sleep 可能阻塞数百毫秒到数秒。
 - session 文件缺失/不可读时 raw 退化为 events（没有 assistant 正文、reasoning、tool 结果），并在轨迹写 `raw_fallback` 事件（sessionId / source / messages / reason）；不静默。
-- night 一次处理全部 pending raw（journal 6 条/批，session/night 3 条/批）；单批超时/异常跳过并写 `memory_extract_failed`，不阻塞其余批次。仍有 pending 时写 `persona_evolve_skipped`（raw_pending），自动演化不跑；状态页“手动睡一觉”可重试；人格演化不再单独手动触发。
-- 人格演化输入是新鲜归一化 digest + 最近 2000 字 journal；`SELF_EVOLVE_MAX_TOKENS` 32k，避免大 journal 日撞 context guard。
-- 状态页“手动睡一觉”异步启动，进度弹窗显示采集 / 整理 / 向量补齐 / 演化 / 收尾（向量补齐带进度条）；状态卡显示上次整理成功 / 失眠（raw 剩余 N）/ 演化失败；失眠或演化失败写 silent `change` 事件（agent 下轮可见，不叫醒），阻塞失败另存 `sleep.lastError`。手动 sleep 可选 `unlimited`（跳过预算闸、仍计 token）。
+- night 一次处理全部 pending raw（journal 6 条/批，session/night 3 条/批）；单批超时/异常跳过并写 `memory_extract_failed`，不阻塞其余批次。仍有 pending 只记录失眠，不再跳过 self（D-59）；状态页“手动睡一觉”可重试。
+- self 由主会话在睡前自由环节写（D-59）：capture 之后、normalize 之前，`living_write_self` 只暂存一版，环节结束统一提交；不再有 `SELF_EVOLVE_MAX_TOKENS` 子 agent 与注入式 digest。
+- 状态页“手动睡一觉”异步启动，进度弹窗显示采集 / 睡前自由环节 / 整理 / 向量补齐 / 宝石更新 / 收尾（向量补齐带进度条）；状态卡显示上次整理成功 / 失眠（raw 剩余 N）/ 自由环节结果；失眠或自由环节失败写 silent `change` 事件（agent 下轮可见，不叫醒），阻塞失败另存 `sleep.lastError`。手动 sleep 可选 `unlimited`（跳过预算闸与自由环节硬顶、仍计 token）。
 - rest 仍会生成轻量 event episodes；夜睡有 raw 整理产物时不再跑 events 聚类，只有整理失败/为空时才兜底。
 - 模型整理是满上下文调用，token 成本明显；预算 HOLD 会跳过。
 - 图的边目前只从夜睡整理产生；不手工编辑，不跨库同步。
