@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { SCHEMA_VERSION } from '../lib/db.mjs'
 import { createStore, OUTBOX_LEASE_MS } from '../lib/store.mjs'
 import { tokenizeForIndex } from '../lib/text.mjs'
 import { decodeVector, encodeVector } from '../lib/embed.mjs'
@@ -30,7 +31,7 @@ function open(t, clock = { now: T0 }) {
 test('迁移幂等：重开后 schema 版本与数据都在', async (t) => {
   const { dir, path } = tempPath()
   const first = createStore({ path })
-  assert.equal(first.schemaVersion(), 10)
+  assert.equal(first.schemaVersion(), SCHEMA_VERSION)
   await first.appendEvent({ id: 'ev_1', kind: 'note', payload: { text: '你好' } })
   await first.setState('clock', { nextWakeAt: 123 })
   await first.close()
@@ -40,7 +41,7 @@ test('迁移幂等：重开后 schema 版本与数据都在', async (t) => {
     await second.close()
     rmSync(dir, { recursive: true, force: true })
   })
-  assert.equal(second.schemaVersion(), 10)
+  assert.equal(second.schemaVersion(), SCHEMA_VERSION)
   assert.deepEqual(second.getEvent('ev_1').payload, { text: '你好' })
   assert.deepEqual(second.getState('clock'), { nextWakeAt: 123 })
 })

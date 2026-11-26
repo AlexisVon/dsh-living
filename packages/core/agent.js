@@ -48,6 +48,47 @@ export function apply(ctx) {
   }))
 
   ctx.tools.register(tool({
+    name: 'living_note',
+    description: 'Self-written prompt/rules and hot-memory supplement, not a journal. Codes are current-view slots: S persistent, A today temp, B yesterday temp (B read-only). op=list/read/add/update/delete/promote/demote. list without tag returns the keyword table; list with tag returns that tag\'s entries. Add returns the new code and remaining capacity; do not read it back to verify, the code is the confirmation. Failures are loud. Persistent: 50 notes max, 40 chars each, tag <=5 chars, core <=8; core is injected full, the rest only by keyword index. Temp: 10/day, 40 chars each, today+yesterday injected full, expires after the second sleep. B entries are read-only: write a new S/A instead. One note = one rule/reminder. Keyword tags are reminders: list --tag before acting.',
+    parameters: objectSchema({
+      op: { type: 'string', enum: ['list', 'read', 'add', 'update', 'delete', 'promote', 'demote'], description: 'Operation.' },
+      code: { type: 'string', description: 'Slot code S1/A2/B3 for read/update/delete/promote/demote. B is read-only.' },
+      tier: { type: 'string', enum: ['persistent', 'temp'], description: 'add target tier.' },
+      tag: { type: 'string', description: 'Index tag, max 5 chars. Reuse an existing tag when possible; also the list filter.' },
+      text: { type: 'string', description: 'One rule/reminder, max 40 chars; do not write background.' },
+      core: { type: 'boolean', description: 'Persistent only: inject full text at every session start.' },
+    }, ['op']),
+    run: async (args) => {
+      const op = String(args?.op ?? '')
+      const requireCode = () => {
+        const code = String(args?.code ?? '').trim()
+        if (code === '') throw new RangeError(`${op} 需要 code（如 S1/A2/B3）`)
+        return code
+      }
+      let result
+      if (op === 'list') {
+        result = args?.tag == null || String(args.tag).trim() === '' ? living.notesKeywords() : living.notesEntries(args.tag)
+      } else if (op === 'read') {
+        result = living.notesRead(requireCode())
+      } else if (op === 'add') {
+        result = await living.notesAdd({ tier: args?.tier ?? 'persistent', tag: args?.tag, text: args?.text, core: args?.core === true })
+      } else if (op === 'update') {
+        result = await living.notesUpdate(requireCode(), { tag: args?.tag, text: args?.text, core: args?.core })
+      } else if (op === 'delete') {
+        result = await living.notesDelete(requireCode())
+      } else if (op === 'promote') {
+        result = await living.notesPromote(requireCode(), { core: args?.core === true })
+      } else if (op === 'demote') {
+        result = await living.notesDemote(requireCode())
+      } else {
+        throw new RangeError(`未知的笔记操作: ${op}`)
+      }
+      living.touchNotes?.()
+      return JSON.stringify({ ok: true, ...result })
+    },
+  }))
+
+  ctx.tools.register(tool({
     name: 'living_mark',
     description: 'Mark one moment on your own timeline. Use it for turning points, decisions, or things you want to find later; it is not a journal entry.',
     parameters: objectSchema({

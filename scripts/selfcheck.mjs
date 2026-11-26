@@ -46,7 +46,7 @@ if (existsSync(layout.dbPath)) {
       add('PASS', 'life.db integrity_check', 'ok')
       const version = db.prepare('PRAGMA user_version').get().user_version
       add(version <= SCHEMA_VERSION ? 'PASS' : 'FAIL', 'life.db schema', `v${version} / 支持 v${SCHEMA_VERSION}`)
-      for (const [table] of [['events'], ['persona_docs'], ['journal_entries'], ['reports'], ['memory_edges']]) {
+      for (const [table] of [['events'], ['persona_docs'], ['journal_entries'], ['reports'], ['memory_edges'], ['notes']]) {
         if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) {
           add('FAIL', `life.db 表 ${table}`, '缺失')
         }

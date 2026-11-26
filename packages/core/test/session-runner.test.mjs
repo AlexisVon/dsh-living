@@ -127,6 +127,67 @@ function makeRunner(host, { title = 'living-2026-11-18-1' } = {}) {
   })
 }
 
+test('轮换：night 清空交接，rest/restart 调用 captureHandoff', async () => {
+  const host = createHost()
+  const calls = []
+  const runner = createSessionRunner(host.ctx, {
+    store: host.store,
+    home: '/tmp/living-session-test',
+    presetId: 'living',
+    roundTokens: 1000,
+    sessionTitle: () => 'living-2026-11-18-1',
+    logger: silent,
+    captureHandoff: async (id, reason, options) => {
+      calls.push({ id, reason, options })
+      return { text: '交接', source: 'tail' }
+    },
+  })
+
+  await runner.run({ prompt: 'a' })
+  const first = host.store.getState('session.current').id
+  await host.store.setState('session.handoff', { text: '旧交接', fromSessionId: first, at: 1 })
+  await runner.rotate('night')
+  assert.equal(host.store.getState('session.handoff'), null, '睡眠边界丢弃旧交接')
+  assert.equal(calls.length, 0)
+
+  await runner.run({ prompt: 'b' })
+  const second = host.store.getState('session.current').id
+  await runner.rotate('rest')
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0], { id: second, reason: 'rest', options: { allowCompression: false } })
+
+  await runner.run({ prompt: 'c' })
+  const third = host.store.getState('session.current').id
+  await runner.rotate('restart')
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[1], { id: third, reason: 'restart', options: { allowCompression: true } })
+  await runner.close()
+})
+
+test('恢复失败：先采集旧会话交接，再新建会话', async () => {
+  const host = createHost()
+  const calls = []
+  await host.store.setState('session.current', { id: 'living_old', startedAt: 1 })
+  await host.store.setState('session.visible', false)
+  const runner = createSessionRunner(host.ctx, {
+    store: host.store,
+    home: '/tmp/living-session-test',
+    presetId: 'living',
+    roundTokens: 1000,
+    sessionTitle: () => 'living-2026-11-18-1',
+    logger: silent,
+    captureHandoff: async (id, reason) => {
+      calls.push({ id, reason })
+      return { text: '交接', source: 'tail' }
+    },
+  })
+  await runner.run({ prompt: 'a' })
+  assert.deepEqual(calls, [{ id: 'living_old', reason: 'resume_failed' }])
+  assert.equal(host.created.length, 1)
+  assert.notEqual(host.store.getState('session.current').id, 'living_old')
+  await runner.close()
+})
+
 test('同一白天复用同一个 agent；隐藏模式轮间归档', async () => {
   const host = createHost()
   const runner = makeRunner(host)

@@ -18,6 +18,35 @@ test('memory-extract：prompt 带 raw id 与固定关系词表', () => {
   assert.match(prompt, /只输出 JSON/)
   assert.match(prompt, /journal 条目/)
   assert.match(prompt, /元记忆/)
+  assert.match(prompt, /\[@100\]/)
+  assert.match(prompt, /@毫秒/)
+})
+
+test('memory-extract：越界时间戳夹到自己的 raw 段，fact 用段范围', () => {
+  const result = parseMemoryExtraction(JSON.stringify({
+    items: [
+      { kind: 'episode', title: '越界', description: '越界', raw: 'raw_s1', ts_start: 900, ts_end: 1000 },
+      { kind: 'fact', subject: 'a', predicate: 'b', object: 'c', raw: 'raw_s1' },
+    ],
+  }), { segments })
+  assert.equal(result.items[0].tsStart, 200)
+  assert.equal(result.items[0].tsEnd, 200)
+  assert.equal(result.items[1].tsStart, 100)
+  assert.equal(result.items[1].tsEnd, 200)
+  assert.equal(result.tsFixed, 1)
+})
+
+test('memory-extract：多段批次里 fact 用自己的 raw 段，不用批首范围', () => {
+  const batch = [
+    { id: 'raw_a', kind: 'journal', tsStart: 100, tsEnd: 100, payload: { messages: [] } },
+    { id: 'raw_b', kind: 'journal', tsStart: 900, tsEnd: 900, payload: { messages: [] } },
+  ]
+  const result = parseMemoryExtraction(JSON.stringify({
+    items: [{ kind: 'fact', subject: 'x', predicate: 'y', object: 'z', raw: 'raw_b' }],
+  }), { segments: batch })
+  assert.equal(result.items[0].tsStart, 900)
+  assert.equal(result.items[0].tsEnd, 900)
+  assert.equal(result.tsFixed, 0)
 })
 
 test('memory-extract：解析 episode/fact/边，clamp 置信度', () => {

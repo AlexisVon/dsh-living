@@ -66,7 +66,9 @@ export function sessionMessages(events) {
         if (eventsText) messages.push({ role: 'event', ts, text: eventsText })
         continue
       }
-      if (/^## (你记得的事|上一段会话交接|现在|本轮)/.test(text)) continue
+      // A round prompt may start with gemNote/degraded; the terminal section is the marker.
+      if (/^## 本轮\s*$/m.test(text)) continue
+      if (/^## (你记得的事|上一段会话交接|持久笔记|临时笔记|现在|本轮)/.test(text)) continue
       messages.push({ role: 'user', ts, text })
     } else if (event?.type === 'assistant/message') {
       const text = textBlocks(data?.message?.content)
@@ -75,7 +77,7 @@ export function sessionMessages(events) {
     } else if (event?.type === 'tool/call') {
       const name = String(data?.name ?? 'tool')
       const callId = String(data?.callId ?? '')
-      if (name === 'living_journal' || name === 'living_mark') {
+      if (name === 'living_journal' || name === 'living_mark' || name === 'living_note') {
         if (callId) skippedCalls.add(callId)
         continue
       }

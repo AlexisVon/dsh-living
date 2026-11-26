@@ -113,7 +113,7 @@ export function alarmEvents({ detail, config, state = {}, device, day, now = Dat
     events.push(event(device, {
       kind: 'food_low',
       externalId: `petkit_alarm_food_low_${day}`,
-      text: `喂食器粮量低（food=${food}）`,
+      text: food <= 0 ? `喂食器粮仓空了（food=${food}）` : `喂食器粮量低（food=${food}）`,
       ts: now,
       silent: false,
       meta: { food },

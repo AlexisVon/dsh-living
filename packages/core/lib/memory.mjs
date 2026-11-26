@@ -181,6 +181,8 @@ export function expandGraph(result, items, edgesFor, { limit = 8, maxSeeds = 5, 
         kind: item.kind,
         layer: item.layer,
         text: item.text,
+        ts: item.ts,
+        lastTs: item.lastTs,
         score,
         strength: item.strength ?? decayedStrength(item, now, params),
         why: [`G1:${edge.relation}`],
@@ -204,7 +206,16 @@ export function buildL0({
   tzOffsetMinutes = null,
   params = MEMORY_DEFAULTS,
 }) {
-  const coldLines = cold.slice(0, params.coldClueMax).map((row) => formatCold(row, tzOffsetMinutes))
+  const coldRows = []
+  const coldLabels = new Set()
+  for (const row of cold) {
+    const label = String(row?.label20 || row?.keyword || '').trim()
+    if (label === '' || coldLabels.has(label)) continue
+    coldLabels.add(label)
+    coldRows.push(row)
+    if (coldRows.length >= params.coldClueMax) break
+  }
+  const coldLines = coldRows.map((row) => formatCold(row, tzOffsetMinutes))
   const coldCost = coldLines.reduce((sum, line) => sum + estimateTokens(`${line}\n`), 0)
   const coldestLine = coldest ? formatEntry(coldest, tzOffsetMinutes) : null
   const reserve = coldestLine ? estimateTokens(`${coldestLine}\n`) : 0
@@ -238,6 +249,8 @@ export function buildL0({
       id: entry.id,
       kind: entry.kind,
       text: entry.text,
+      ts: entry.ts ?? null,
+      lastTs: entry.lastTs ?? null,
       why: entry.why ?? [],
       drivesAction: entry.drivesAction !== false && (entry.fidelity ?? 1) >= 0.7,
     })),

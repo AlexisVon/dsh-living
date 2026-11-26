@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
       ['config', '配置'],
       ['rounds', '轨迹'],
       ['memory', '记忆'],
+      ['notes', '笔记'],
       ['reports', '日报'],
     ]
 
@@ -131,6 +132,12 @@ window.__ModuleLoader__.load({
       if (!Number.isFinite(ts) || ts <= 0) return '—'
       const date = new Date(ts)
       return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+    }
+
+    function localDay(delta = 0) {
+      const date = new Date()
+      date.setDate(date.getDate() + delta)
+      return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
     }
 
     function clockTimeShort(ts) {
@@ -2968,6 +2975,197 @@ window.__ModuleLoader__.load({
       limiter_pass_streak: '判决连过',
     }
 
+    function NotesPanel() {
+      const notify = React.useContext(ToastContext)
+      const [nonce, setNonce] = React.useState(0)
+      const data = useRpc('notes', { nonce }, 15_000)
+      const keywords = data.value?.keywords ?? []
+      const stats = data.value?.stats ?? {}
+      const [selectedTag, setSelectedTag] = React.useState(null)
+      const [entries, setEntries] = React.useState(null)
+      const [entriesError, setEntriesError] = React.useState(null)
+      const entriesTagRef = React.useRef(null)
+      const [draft, setDraft] = React.useState({ tier: 'persistent', tag: '', text: '', core: false })
+      const [editing, setEditing] = React.useState(null)
+      const [deleting, setDeleting] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState(null)
+      const capacity = `S ${formatNumber(stats.persistent ?? 0)}/${formatNumber(stats.persistentMax ?? 50)} · A ${formatNumber(stats.tempToday ?? 0)}/${formatNumber(stats.tempPerDay ?? 10)} · B ${formatNumber(stats.tempYesterday ?? 0)}（只读）`
+
+      React.useEffect(() => {
+        if (keywords.length === 0) return
+        if (selectedTag == null || !keywords.some((keyword) => keyword.tag === selectedTag)) {
+          setSelectedTag(keywords[0].tag)
+        }
+      }, [keywords, selectedTag])
+
+      React.useEffect(() => {
+        if (selectedTag == null) {
+          setEntries([])
+          return undefined
+        }
+        if (entriesTagRef.current !== selectedTag) {
+          entriesTagRef.current = selectedTag
+          setEntries(null)
+          setEntriesError(null)
+        }
+        let alive = true
+        call('noteEntries', { tag: selectedTag })
+          .then((value) => { if (alive) { setEntries(value.entries ?? []); setEntriesError(null) } })
+          .catch((err) => { if (alive) setEntriesError(err.message) })
+        return () => { alive = false }
+      }, [selectedTag, nonce, data.value])
+
+      const reset = () => {
+        setDraft({ tier: 'persistent', tag: '', text: '', core: false })
+        setEditing(null)
+        setError(null)
+      }
+      const refresh = () => setNonce((value) => value + 1)
+      const run = (endpoint, payload, message) => {
+        setBusy(true)
+        setError(null)
+        return call(endpoint, payload)
+          .then((value) => {
+            notify(typeof message === 'function' ? message(value) : message)
+            refresh()
+            return value
+          })
+          .catch((err) => {
+            setError(err.message)
+            throw err
+          })
+          .finally(() => setBusy(false))
+      }
+      const save = () => {
+        const body = { tag: draft.tag.replace(/\s+/g, '').trim(), text: draft.text.trim(), core: draft.tier === 'persistent' && draft.core === true }
+        if (editing) {
+          run('noteUpdate', { code: editing.code, ...body }, '笔记已更新')
+            .then(() => { setSelectedTag(body.tag); reset() })
+            .catch(() => {})
+        } else {
+          run('noteAdd', { tier: draft.tier, ...body }, (value) => `已写入 ${value?.code ?? '笔记'}`)
+            .then(() => { setSelectedTag(body.tag); reset() })
+            .catch(() => {})
+        }
+      }
+      const startEdit = (note) => {
+        setEditing(note)
+        setDraft({ tier: note.code.startsWith('S') ? 'persistent' : 'temp', tag: note.tag, text: note.text, core: note.core === true })
+        setError(null)
+      }
+      const remove = () => {
+        if (!deleting) return
+        run('noteDelete', { code: deleting.code }, '笔记已删除').then(() => setDeleting(null)).catch(() => {})
+      }
+      const toggleCore = (note) => run('noteUpdate', { code: note.code, core: note.core !== true }, note.core ? '已取消 core' : '已设为 core').catch(() => {})
+      const promote = (note) => run('notePromote', { code: note.code }, '已升为 S').catch(() => {})
+      const demote = (note) => run('noteDemote', { code: note.code }, '已降为 A').catch(() => {})
+      const actionButton = (label, onClick, variant = 'outline') => h(Button, { variant, size: 'sm', disabled: busy, onClick }, label)
+      const keywordRow = (keyword) => {
+        const counts = [keyword.s > 0 ? `S${keyword.s}` : null, keyword.a > 0 ? `A${keyword.a}` : null, keyword.b > 0 ? `B${keyword.b}` : null].filter(Boolean).join(' ')
+        const active = keyword.tag === selectedTag
+        return h('div', {
+          key: keyword.tag,
+          className: 'living-row',
+          style: { cursor: 'pointer', background: active ? 'rgba(64, 128, 255, 0.10)' : 'transparent' },
+          onClick: () => setSelectedTag(keyword.tag),
+        },
+          h('span', { className: 'living-chip' }, keyword.tag),
+          h('span', { className: 'living-muted living-mono' }, counts),
+          h('span', { className: 'living-muted', style: { marginLeft: 'auto' } }, `${keyword.s + keyword.a + keyword.b} 条`))
+      }
+      const entryRow = (note) => {
+        const persistent = note.code.startsWith('S')
+        const todayTemp = note.code.startsWith('A')
+        return h('div', { key: note.code, className: 'living-row' },
+          h('span', { className: 'living-chip living-mono' }, note.code),
+          persistent && note.core ? Badge({ tone: 'ok', children: 'core' }) : null,
+          note.readOnly ? Badge({ tone: 'muted', children: '只读' }) : null,
+          h('span', { style: { flex: 1, minWidth: 180 } }, note.text),
+          h('span', { className: 'living-muted' }, relativeTime(note.updatedAt)),
+          note.readOnly ? null : actionButton('改', () => startEdit(note)),
+          persistent ? actionButton(note.core ? '取消 core' : '设 core', () => toggleCore(note)) : null,
+          todayTemp ? actionButton('升 S', () => promote(note)) : null,
+          persistent ? actionButton('降 A', () => demote(note)) : null,
+          note.readOnly ? null : actionButton('删', () => setDeleting(note)))
+      }
+
+      return h('div', { className: 'living-field' },
+        h('div', { className: 'living-stats' },
+          h('span', { className: 'living-muted living-mono' }, capacity),
+          h('span', { className: 'living-muted' }, `core ${formatNumber(stats.core ?? 0)}/${formatNumber(stats.coreMax ?? 8)}`)),
+        data.error ? h('div', { className: 'living-field-error' }, `读取失败：${data.error}`) : null,
+        error ? h('div', { className: 'living-field-error' }, error) : null,
+        h('section', { className: 'living-card' },
+          h('div', { className: 'living-card-head' },
+            h('span', null, editing ? '编辑笔记' : '写笔记'),
+            h('span', { className: 'living-muted' }, '一条一件事')),
+          editing
+            ? h('div', { className: 'living-muted' }, `正在编辑 ${editing.code} [${editing.tag}]`)
+            : h('div', { className: 'living-controls' },
+                h(Pill, { active: draft.tier === 'persistent', onClick: () => setDraft({ ...draft, tier: 'persistent' }) }, 'S 持久'),
+                h(Pill, { active: draft.tier === 'temp', onClick: () => setDraft({ ...draft, tier: 'temp', core: false }) }, 'A 今天')),
+          h('div', { className: 'living-controls' },
+            h('div', { style: { width: 130 } },
+              h(Input, {
+                value: draft.tag,
+                maxLength: 5,
+                placeholder: '关键词 ≤5 字',
+                onChange: (event) => setDraft({ ...draft, tag: event.target.value }),
+              })),
+            h('div', { style: { flex: 1, minWidth: 240 } },
+              h(Input, {
+                value: draft.text,
+                maxLength: 40,
+                placeholder: '一条规则/提示（≤40 字）',
+                onChange: (event) => setDraft({ ...draft, text: event.target.value }),
+                onKeyDown: (event) => { if (event.key === 'Enter') save() },
+              })),
+            draft.tier === 'persistent'
+              ? h(Switch, { checked: draft.core, label: 'core', onChange: (value) => setDraft({ ...draft, core: value === true }) })
+              : null,
+            h(Button, {
+              variant: 'primary',
+              disabled: busy || draft.tag.trim() === '' || draft.text.trim() === '',
+              onClick: save,
+            }, busy ? '保存中…' : editing ? '保存修改' : '写入')),
+          editing ? h(Button, { variant: 'outline', size: 'sm', onClick: reset }, '取消编辑') : null,
+          h('div', { className: 'living-field-help' }, '这些是它写给自己的提示词/规则和热区记忆，补自动记忆覆盖不到/不及时的部分；不是 journal。S 持久（50 条 × 40 字，core ≤8 每会话注入全文，其余按关键词索引查）；A 今天、B 昨天（每天 10 条 × 40 字，全文注入；B 只读，过第二个 sleep 过期）。满了会大声失败。')),
+        h('section', { className: 'living-card' },
+          h('div', { className: 'living-card-head' },
+            h('span', null, '关键词'),
+            h('div', { className: 'living-controls' },
+              h('span', { className: 'living-muted' }, `${keywords.length} 个`),
+              actionButton('刷新', refresh))),
+          keywords.length === 0
+            ? h('div', { className: 'living-empty' }, '还没有关键词')
+            : h('div', { className: 'living-field' }, ...keywords.map(keywordRow))),
+        h('section', { className: 'living-card' },
+          h('div', { className: 'living-card-head' },
+            h('span', null, selectedTag ? `关键词：${selectedTag}` : '条目'),
+            h('span', { className: 'living-muted' }, selectedTag && entries ? `${entries.length} 条` : '')),
+          entriesError ? h('div', { className: 'living-field-error' }, `读取失败：${entriesError}`) : null,
+          selectedTag == null
+            ? h('div', { className: 'living-empty' }, '还没有笔记；先写一条')
+            : entries == null
+              ? h('div', { className: 'living-empty' }, '加载中…')
+              : entries.length === 0
+                ? h('div', { className: 'living-empty' }, '这个词下没有笔记')
+                : h('div', { className: 'living-field' }, ...entries.map(entryRow))),
+        h(Modal, {
+          open: Boolean(deleting),
+          title: '删除这条笔记？',
+          description: deleting ? `${deleting.code} [${deleting.tag}] ${deleting.text}` : '',
+          closeLabel: '取消',
+          onClose: () => setDeleting(null),
+          footer: [
+            h(Button, { key: 'cancel', variant: 'outline', onClick: () => setDeleting(null) }, '取消'),
+            h(Button, { key: 'ok', variant: 'primary', disabled: busy, onClick: remove }, busy ? '删除中…' : '删除'),
+          ],
+        }))
+    }
+
     function ReportsPanel() {
       const { value, error } = useRpc('reports', {}, 15_000)
       const archived = [...(value ?? [])].sort()
@@ -3087,6 +3285,7 @@ window.__ModuleLoader__.load({
             tab === 'config' ? h(ConfigPanel, { form: props.configForm }) : null,
             tab === 'rounds' ? h(RoundsPanel) : null,
             tab === 'memory' ? h(MemoryPanel) : null,
+            tab === 'notes' ? h(NotesPanel) : null,
             tab === 'reports' ? h(ReportsPanel) : null),
           node))
     }

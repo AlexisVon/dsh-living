@@ -328,6 +328,8 @@ function toResult(item, score, why, strength, relevance) {
     kind: item.kind,
     layer: item.layer,
     text: item.text,
+    ts: item.ts,
+    lastTs: item.lastTs,
     score: round3(score),
     why: [...why],
     strength: round2(strength),

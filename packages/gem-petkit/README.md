@@ -1,6 +1,6 @@
 # dsh-gem-petkit
 
-小佩 D4H 单仓摄像头版 WorldGem：状态、周计划、出粮与进食记录、手动出粮。重要异常唤醒一轮；日常进食只拉不推。
+小佩 D4H 单仓摄像头版 WorldGem：状态、周计划、出粮与进食记录、手动出粮。状态里有粮仓有/无（`food`）和碗里余粮百分比（`bowl`）。重要异常唤醒一轮；日常进食只拉不推。
 
 ## 装进 dsh-living
 
@@ -36,7 +36,7 @@ gemTokensJson: '{"petkit":"<随机长 token>"}'
 | `feedVerifySeconds` | 15 | 提交后等待物理确认的秒数，0 = 不等待 |
 | `pollSeconds` | 120 | 状态/记录轮询间隔；太快会被限流 |
 | `historyDays` | 7 | `petkit_history` 最多回看天数 |
-| `foodLowLevel` | 1 | `state.food` 低于等于此值视为缺粮；先对照 App 校准 |
+| `foodLowLevel` | 1 | `state.food` 低于等于此值视为缺粮；D4H 的 `food` 只有 0/2（有/无），先对照 App 校准 |
 | `desiccantWarnDays` | 7 | 干燥剂剩余天数提醒 |
 | `offlineMinutes` | 30 | 连续不可达超过此时间才唤醒 |
 | `batteryLowPercent` | 20 | 只在电池供电（`pim=2`）时有意义 |

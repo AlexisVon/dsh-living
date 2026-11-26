@@ -110,6 +110,40 @@ test('自动唤醒：起一轮、写锚点与事件、预算计一轮', async (t
   assert.equal(rt.snapshot().budget.tokensUsed, 10, '真实用量必须进入预算')
 })
 
+test('笔记：新会话首轮注入 core/索引/临时，第二轮不再注入', async (t) => {
+  const { calls, runner } = collector()
+  const { rt, store, clock } = await setup(t, { runner })
+  const today = dayKey(clock.now, TZ)
+  const yesterday = dayKey(clock.now - DAY, TZ)
+  await store.addNote({ tier: 'persistent', tag: '窗口回复', text: '窗口里打的字就在窗口回', core: true })
+  await store.addNote({ tier: 'persistent', tag: '猫粮', text: '先看粉料比例' })
+  await store.addNote({ tier: 'temp', tag: '猫粮', text: '今天问体重', day: today })
+  await store.addNote({ tier: 'temp', tag: 'B站', text: '先读评论树', day: yesterday })
+
+  await rt.tick()
+  assert.equal(calls.length, 1)
+  assert.match(calls[0], /## 笔记（S 2\/50 · A 1\/10 · B 1（只读））/)
+  assert.match(calls[0], /S1 窗口里打的字就在窗口回/)
+  assert.match(calls[0], /猫粮 S1 A1/)
+  assert.match(calls[0], /窗口回复 S1/)
+  assert.match(calls[0], /B站 B1/)
+  assert.doesNotMatch(calls[0], /S2 先看粉料比例/, '非 core 只进索引')
+  assert.match(calls[0], /A1 今天问体重/)
+  assert.match(calls[0], /B1 先读评论树/)
+
+  await rt.runRound({ trigger: 'auto' }, clock.now)
+  assert.equal(calls.length, 2)
+  assert.doesNotMatch(calls[1], /## 笔记/)
+})
+
+test('L0 注入写 access 日志（kind=inject）', async (t) => {
+  const { rt, store } = await setup(t, { runner: collector().runner })
+  await store.appendEvent({ id: 'ev_heat', ts: NOW, kind: 'message', source: 'wechat', payload: { text: '散热坏了', importance: 0.9 } })
+  await rt.tick()
+  const access = store.listAccess('message', 'ev_heat', { limit: 10 })
+  assert.ok(access.some((row) => row.kind === 'inject' && row.ts === NOW), JSON.stringify(access))
+})
+
 test('人格与技能进会话静态前缀，不进本轮 prompt', async (t) => {
   const { calls, runner } = collector()
   const { rt, store } = await setup(t, { runner })
@@ -935,6 +969,69 @@ test('夜睡自由环节：主会话写 self、记事件、计 token', async (t)
   const [freetime] = store.listEvents({ kind: 'sleep_freetime', limit: 10 })
   assert.equal(freetime.payload.staged, true)
   assert.equal(freetime.payload.committed, true)
+})
+
+test('夜睡笔记：自由环节带状态，临时笔记保留今天/昨天，前天过期', async (t) => {
+  const prompts = []
+  const { rt, store, clock } = await setup(t, {
+    runner: async ({ prompt }) => {
+      prompts.push(prompt)
+      return { tokens: 5, outcome: 'ok' }
+    },
+  })
+  const today = dayKey(clock.now, TZ)
+  const yesterday = dayKey(clock.now - DAY, TZ)
+  const older = dayKey(clock.now - 2 * DAY, TZ)
+  await store.addNote({ tier: 'persistent', tag: '窗口回复', text: '窗口回', core: true })
+  await store.addNote({ tier: 'temp', tag: '今天', text: '今天的事', day: today })
+  await store.addNote({ tier: 'temp', tag: '昨天', text: '昨天的事', day: yesterday })
+  await store.addNote({ tier: 'temp', tag: '前天', text: '前天的事', day: older })
+
+  await rt.sleep('night')
+  assert.equal(prompts.length, 1)
+  assert.match(prompts[0], /## 笔记/)
+  assert.match(prompts[0], /S 1\/50 · A 1\/10 · B 1（只读）/)
+  assert.equal(store.countNotes({ tier: 'temp', day: older }), 0)
+  assert.equal(store.countNotes({ tier: 'temp', day: yesterday }), 1)
+  assert.equal(store.countNotes({ tier: 'temp', day: today }), 1)
+})
+
+test('笔记服务：S/A/B 编号、关键词表、B 只读', async (t) => {
+  const { rt, clock } = await setup(t)
+  const service = rt.service()
+  const s1 = await service.notesAdd({ tier: 'persistent', tag: '猫粮', text: '先看粉料比例', core: true })
+  assert.equal(s1.code, 'S1')
+  assert.equal(s1.stats.text, 'S 1/50 · A 0/10 · B 0（只读）')
+  const a1 = await service.notesAdd({ tier: 'temp', tag: '猫粮', text: '明天问体重' })
+  assert.equal(a1.code, 'A1')
+
+  assert.deepEqual(service.notesKeywords().keywords, [{ tag: '猫粮', s: 1, a: 1, b: 0 }])
+  assert.deepEqual(service.notesEntries('猫粮').entries.map((entry) => entry.code), ['S1', 'A1'])
+  assert.equal(service.notesRead('S1').note.text, '先看粉料比例')
+  assert.throws(() => service.notesRead('S9'), /没有笔记 S9/)
+
+  clock.now += DAY
+  assert.equal(service.notesRead('B1').note.readOnly, true)
+  assert.deepEqual(service.notesEntries('猫粮').entries.map((entry) => entry.code), ['S1', 'B1'])
+  assert.throws(() => service.notesRead('A1'), /没有笔记 A1/)
+  await assert.rejects(() => service.notesUpdate('B1', { text: '改' }), /只读/)
+  await assert.rejects(() => service.notesDelete('B1'), /只读/)
+  await assert.rejects(() => service.notesPromote('B1'), /只读/)
+  await assert.rejects(() => service.notesDemote('B1'), /只读/)
+})
+
+test('夜睡笔记接近上限且没动笔记：写 notes_ignored', async (t) => {
+  const { rt, store, clock } = await setup(t, {
+    runner: async () => ({ tokens: 1, outcome: 'ok' }),
+  })
+  for (let index = 0; index < 40; index += 1) {
+    await store.addNote({ tier: 'persistent', tag: `t${index % 8}`, text: `规则${index}` })
+  }
+  await rt.sleep('night')
+  const [event] = store.listEvents({ kind: 'notes_ignored', limit: 10 })
+  assert.ok(event, '接近上限未整理时要留痕')
+  assert.equal(event.payload.persistent, 40)
+  assert.equal(event.payload.tempToday, 0)
 })
 
 test('人格演化模式 off：自由环节照跑，self 窗口关闭', async (t) => {

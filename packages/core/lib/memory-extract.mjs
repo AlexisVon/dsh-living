@@ -52,10 +52,11 @@ function compactSegment(segment) {
     const who = message.role === 'tool_call' ? `tool_call ${message.name ?? ''}` : message.role
     const text = clip(message.text, 1200)
     const reasoning = message.reasoning ? `\n  reasoning: ${clip(message.reasoning, 800)}` : ''
-    return `[${who}] ${text}${reasoning}`
+    const ts = Number.isFinite(Number(message.ts)) ? Number(message.ts) : segment.tsStart
+    return `[@${ts}] [${who}] ${text}${reasoning}`
   })
   return [
-    `## ${segment.id} · ${segment.kind} · ${formatTime(segment.tsStart)} → ${formatTime(segment.tsEnd)}`,
+    `## ${segment.id} · ${segment.kind} · ${formatTime(segment.tsStart)} → ${formatTime(segment.tsEnd)}（${segment.tsStart} → ${segment.tsEnd} ms）`,
     ...lines,
   ].join('\n')
 }
@@ -94,7 +95,7 @@ export function buildMemoryPrompt({ segments = [], maxItems = MEMORY_EXTRACT_MAX
     `- items 最多 ${maxItems} 条，edges 最多 ${maxEdges} 条；没有就留空数组。`,
     '- from/to 是本条输出 items 的下标；relation 必须来自上面的词表。',
     '- raw 必须用输入里的 raw id；一个条目只引用它内容来源的那一个 raw，不要跨 raw 合并。',
-    '- ts_start / ts_end 用输入消息里的毫秒时间；不确定就用该 raw 的时间范围。',
+    '- ts_start / ts_end 用每条消息前的 @毫秒；不确定就用该 raw 的毫秒范围；必须落在范围里。',
     '- 事实用 subject/predicate/object 三段式；叙事用 episode。',
     '- journal 条目是你的第一人称记录，可作记忆来源；保留具体人名、时间、数字和事实。',
     '- 不记录记忆系统运行状态的元记忆（整合时间、items/edges 数、自检线索、预算、网格）；工具调用与审计 JSON 不是记忆正文。',
@@ -112,12 +113,14 @@ export function parseMemoryExtraction(text, { segments = [], maxItems = MEMORY_E
   if (start < 0 || end <= start) throw new Error('记忆整理输出不是 JSON')
   const parsed = JSON.parse(raw.slice(start, end + 1))
   const segmentIds = new Set(segments.map((segment) => segment.id))
+  const segmentById = new Map(segments.map((segment) => [segment.id, segment]))
   const fallbackRaw = segments[0]?.id ?? null
   const fallbackStart = segments[0]?.tsStart ?? Date.now()
   const fallbackEnd = segments[segments.length - 1]?.tsEnd ?? fallbackStart
 
   const items = []
   const indexMap = new Map()
+  let tsFixed = 0
   const rawItems = Array.isArray(parsed.items) ? parsed.items.slice(0, maxItems) : []
   for (let sourceIndex = 0; sourceIndex < rawItems.length; sourceIndex += 1) {
     const item = rawItems[sourceIndex]
@@ -126,8 +129,16 @@ export function parseMemoryExtraction(text, { segments = [], maxItems = MEMORY_E
     if (!rawRef) continue
     const confidence = clamp01(item?.confidence, 0.6)
     const importance = clamp01(item?.importance, kind === 'fact' ? 0.5 : 0.4)
-    const tsStart = Number.isFinite(item?.ts_start) ? Number(item.ts_start) : fallbackStart
-    const tsEnd = Number.isFinite(item?.ts_end) ? Number(item.ts_end) : (kind === 'episode' ? tsStart : null)
+    const segment = segmentById.get(rawRef)
+    const rangeStart = segment?.tsStart ?? fallbackStart
+    const rangeEnd = segment?.tsEnd ?? fallbackEnd
+    const hadStart = Number.isFinite(item?.ts_start)
+    const hadEnd = Number.isFinite(item?.ts_end)
+    const rawStart = hadStart ? Number(item.ts_start) : rangeStart
+    const rawEnd = hadEnd ? Number(item.ts_end) : (kind === 'episode' ? rawStart : rangeEnd)
+    const tsStart = clampTime(rawStart, rangeStart, rangeEnd)
+    const tsEnd = clampTime(rawEnd, tsStart, rangeEnd)
+    if ((hadStart && tsStart !== rawStart) || (hadEnd && tsEnd !== rawEnd)) tsFixed += 1
     if (kind === 'fact') {
       const subject = clip(item?.subject, 200)
       const predicate = clip(item?.predicate, 120)
@@ -162,7 +173,7 @@ export function parseMemoryExtraction(text, { segments = [], maxItems = MEMORY_E
       confidence: clamp01(edge?.confidence, 0.5),
     })
   }
-  return { items, edges }
+  return { items, edges, tsFixed }
 }
 
 function normalizeFacets(facets) {
@@ -183,6 +194,12 @@ function clamp01(value, fallback) {
   const number = Number(value)
   if (!Number.isFinite(number)) return fallback
   return Math.max(0, Math.min(1, number))
+}
+
+function clampTime(value, lo, hi) {
+  if (!Number.isFinite(value)) return lo
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return value
+  return Math.min(hi, Math.max(lo, value))
 }
 
 export function createMemoryExtractor(ctx, { home, workspace = home, presetId, logger = console, archive = async () => {}, setup = null, memoryParams = MEMORY_DEFAULTS } = {}) {

@@ -207,6 +207,39 @@ export function createAdminRpc({
           edges: store.listMemoryEdges({ kind: item.kind, id: item.id, limit: 50 }),
         })
       }
+      if (endpoint === 'notes') {
+        return ok(runtime.service().notesKeywords())
+      }
+      if (endpoint === 'noteEntries') {
+        return ok(runtime.service().notesEntries(String(payload?.tag ?? '')))
+      }
+      if (endpoint === 'noteRead') {
+        return ok(runtime.service().notesRead(String(payload?.code ?? '')))
+      }
+      if (endpoint === 'noteAdd') {
+        return ok(await runtime.service().notesAdd({
+          tier: payload?.tier,
+          tag: payload?.tag,
+          text: payload?.text,
+          core: payload?.core === true,
+        }))
+      }
+      if (endpoint === 'noteUpdate') {
+        return ok(await runtime.service().notesUpdate(String(payload?.code ?? ''), {
+          tag: payload?.tag,
+          text: payload?.text,
+          core: payload?.core,
+        }))
+      }
+      if (endpoint === 'noteDelete') {
+        return ok(await runtime.service().notesDelete(String(payload?.code ?? '')))
+      }
+      if (endpoint === 'notePromote') {
+        return ok(await runtime.service().notesPromote(String(payload?.code ?? ''), { core: payload?.core === true }))
+      }
+      if (endpoint === 'noteDemote') {
+        return ok(await runtime.service().notesDemote(String(payload?.code ?? '')))
+      }
       if (endpoint === 'outbox') {
         return ok(store.listOutbox({ gem: payload?.gem ?? null, limit: payload?.limit ?? 50 }))
       }

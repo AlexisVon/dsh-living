@@ -6,16 +6,17 @@ import { feedWithVerification } from '../lib/feed.mjs'
 import { errorCodeKey } from '../lib/events.mjs'
 import { findMeal, formatClock, formatPlan, mealActionIssue, parseClock, summarizeMeal, waitForMealStatus } from '../lib/plan.mjs'
 import { downloadPetkitImage } from '../lib/media.mjs'
+import { foodStatus } from '../lib/status.mjs'
 import { isAuthError, isRateLimit } from '../lib/errors.mjs'
 
 const NAME = 'dsh-gem-petkit'
-const VERSION = '0.1.2'
+const VERSION = '0.1.3'
 const PROTOCOL = '2024-11-05'
 
 const TOOLS = [
   {
     name: 'petkit_status',
-    description: "Read the feeder's current state: food level, desiccant, power, today's planned/dispensed totals, today's meal status (including one-day skips) and the latest eating event. Read-only.",
+    description: "Read the feeder's current state: hopper food (D4H is present/empty only), bowl percentage when reported, desiccant, power, today's planned/dispensed totals, today's meal status (including one-day skips) and the latest eating event. Read-only.",
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -201,7 +202,7 @@ function formatStatus(detail, records, config, device, gemState = {}) {
   const name = detail?.name || device.name || '喂食器'
   const lines = []
   lines.push(`设备：${name}（${device.deviceType}，typeCode=${device.typeCode ?? '?'}）`)
-  lines.push(`连接：云接口可达；粮量 food=${state.food ?? '?'}；干燥剂 ${state.desiccantLeftDays ?? '?'} 天；电源 ${Number(state.pim) === 2 ? `电池 ${Number(state.batteryPower ?? 0) * 25}%` : '市电'}`)
+  lines.push(`连接：云接口可达；${foodStatus(state)}；干燥剂 ${state.desiccantLeftDays ?? '?'} 天；电源 ${Number(state.pim) === 2 ? `电池 ${Number(state.batteryPower ?? 0) * 25}%` : '市电'}`)
   lines.push(`今日：计划 ${feed.planAmountTotal ?? '?'}g，已出 ${feed.realAmountTotal ?? '?'}g（计划 ${feed.planRealAmountTotal ?? '?'}g + 手动 ${feed.addAmountTotal ?? '?'}g），次数 ${feed.times ?? '?'}`)
   if (errorCodeKey(state.errorCode) !== '0') lines.push(`故障：${state.errorMsg || state.errorDetail || `错误码 ${state.errorCode}`}`)
 

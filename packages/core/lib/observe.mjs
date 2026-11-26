@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
 import { dayKey } from './clock.mjs'
+import { shiftDay } from './notes.mjs'
 import { buildTimeline } from './timeline.mjs'
 
 const DAY_MS = 86400000
@@ -164,6 +165,9 @@ export function buildDailyReport({ store, date, tzOffsetMinutes = 0, records = [
     cacheRead += record.tokens.cacheRead
   }
 
+  const notes = typeof store.noteStats === 'function'
+    ? store.noteStats({ day: date, yesterday: shiftDay(date, -1) })
+    : null
   const report = {
     date,
     generatedAt: now,
@@ -178,6 +182,7 @@ export function buildDailyReport({ store, date, tzOffsetMinutes = 0, records = [
       cacheRead,
       sessions: visibleRecords.filter((record) => record.kind === 'session').length,
       outbound,
+      notes,
     },
     rhythm,
     actions: { triggers, outcomes, toolCalls },
@@ -204,6 +209,7 @@ export function renderReportMarkdown(report) {
     `- 事件：${s.events ?? 0} · 错过日程：${s.missedSchedules ?? 0}`,
     `- Token：输入 ${s.tokensIn ?? 0} / 输出 ${s.tokensOut ?? 0} / 缓存读 ${s.cacheRead ?? 0}`,
     `- 外发决策：${outbound.decisions ?? 0}（拦 ${outbound.block ?? 0}）· 判决 pass 率 ${outbound.limiterPassRate == null ? '—' : `${Math.round(outbound.limiterPassRate * 100)}%`}`,
+    `- 笔记：S ${s.notes?.persistent ?? 0}/50（core ${s.notes?.core ?? 0}/8）· A ${s.notes?.tempToday ?? 0}/10 · B ${s.notes?.tempYesterday ?? 0}`,
     '',
   ]
   const timeline = report.timeline ?? []
@@ -251,7 +257,8 @@ th{background:#f6f6f6}.num{text-align:right;font-variant-numeric:tabular-nums}
 <h1>Living 日报 · ${report.date}</h1>
 <p>轮次 ${s.rounds}（成功 ${s.successful} / 失败 ${s.failed}）· 事件 ${s.events} · 错过日程 ${s.missedSchedules}<br>
 Token：输入 ${s.tokensIn} / 输出 ${s.tokensOut} / 缓存读 ${s.cacheRead} · 会话 ${s.sessions}<br>
-外发决策 ${s.outbound?.decisions ?? 0}（拦 ${s.outbound?.block ?? 0}）· 判决 pass 率 ${s.outbound?.limiterPassRate == null ? '—' : `${Math.round(s.outbound.limiterPassRate * 100)}%`}</p>
+外发决策 ${s.outbound?.decisions ?? 0}（拦 ${s.outbound?.block ?? 0}）· 判决 pass 率 ${s.outbound?.limiterPassRate == null ? '—' : `${Math.round(s.outbound.limiterPassRate * 100)}%`}<br>
+笔记：S ${s.notes?.persistent ?? 0}/50（core ${s.notes?.core ?? 0}/8）· A ${s.notes?.tempToday ?? 0}/10 · B ${s.notes?.tempYesterday ?? 0}</p>
 <h2>作息热图</h2>
 <table><tr><th>小时</th><th>轮次</th></tr>
 ${rows(report.rhythm, ['hour', 'rounds'], (r, c) => c === 'rounds' ? `<div class="bar" style="width:${Math.min(100, r.rounds * 12)}px"></div>${r.rounds}` : String(r.hour))}

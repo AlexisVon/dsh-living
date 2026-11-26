@@ -21,6 +21,7 @@ export const HANDOFF_PROMPT =
 export function buildRoundPrompt({
   l0 = '',
   handoff = '',
+  notes = '',
   situation = '',
   events = [],
   trigger = '',
@@ -34,6 +35,7 @@ export function buildRoundPrompt({
   if (gemNote) parts.push(gemNote)
   if (l0) parts.push(`## 你记得的事\n\n${l0}`)
   if (handoff) parts.push(`## 上一段会话交接\n\n${handoff}`)
+  if (notes) parts.push(notes)
   if (situation) parts.push(`## 现在\n\n${situation}`)
   if (events.length > 0) parts.push(`## 新事件\n\n${formatEvents(events)}`)
   parts.push(`## 本轮\n\n${trigger || '本轮没有明确任务。若无事可做，直接结束。'}`)

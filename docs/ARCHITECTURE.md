@@ -174,6 +174,7 @@ ingest_seen(gem, external_id, event_id, seen_at)  -- 入站去重（长轮询会
 imported(key, source, ts, text)                   -- 文本导入幂等
 persona_docs(kind, text, updated_at)              -- 当前 charter / self
 journal_entries(id, date, ts, text, source, created_at)  -- 按日 journal
+notes(id, seq, tier, tag, text, core, day, created_at, updated_at)  -- 手写笔记：persistent/temp；seq 为视图槽位（D-60）
 persona_versions(id, ts, kind, actor, action, message, previous_id, text, diff)
                                                   -- charter/self 版本：全文快照 + 对上一版的 diff
 memory_fts(memory_kind, memory_id, tokens)        -- FTS5 检索索引（中文双字/四字）
@@ -182,6 +183,8 @@ memory_fts(memory_kind, memory_id, tokens)        -- FTS5 检索索引（中文�
 三层在同一个 `life.db`：raw（events + raw_segments）→ normalized（episodes/facts + facets）→ graph（memory_edges）。rest 只采集 raw 和轻量 episodes；夜睡用 `living-memory` 专用无工具 preset 把 pending raw 整理成 items/facets/edges；模型失败 3 次后走确定性 fallback。边是派生数据，召回 G1 沿边扩 1 跳。详见 `docs/R16-MEMORY.md`。
 
 `memory_vectors` 只服务回想子 agent 的时间区段预测，不参与 L0/recall 的事实召回；模型或 URL 变更时整表清空并按需重建。
+
+笔记是独立于记忆的手写库（D-60）：S 持久 50 条 × 40 字 + ≤5 字 tag（core 全文、其余只注入关键词索引）；A 今天 / B 昨天临时每天 10 条 × 40 字（全文、B 只读），第二个 sleep 后过期。编号 S/A/B 是当前视图槽位：删除留空、不重排，新写/升/降取最小空闲槽，跨天 A 同序号变 B。容量由注入预算反向定义，store 单点拒绝。会话续接（D-61）：非 sleep 轮换/重启走外部压缩交接（确定性尾部兜底），sleep 是边界、不续接。
 
 日报也进 `life.db` 的 `reports` 表（JSON + Markdown + HTML），不再写 `reports/*.json|html|md` 零散文件；UI 日报页按日历选日期，下面直接渲染 Markdown。persona 的 `charter` / `self` / `journal` 也在 `persona_docs` / `journal_entries`；旧 `charter.md` / `self.md` / `journal/*.md` 在启动时一次性导入，之后文件不再写。媒体仍以文件存放，DB 存路径与元数据；宿主 session 日志仍由 DSH 管理。
 

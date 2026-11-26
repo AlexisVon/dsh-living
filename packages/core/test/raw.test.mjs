@@ -43,6 +43,37 @@ test('raw：从轮次 prompt 里只取新事件，丢掉 L0/情境/交接', () =
   assert.doesNotMatch(messages[0].text, /旧记忆|旧交接|时间/)
 })
 
+test('raw：gemNote/degraded 开头的本轮 prompt 不被当成用户消息', () => {
+  const messages = sessionMessages([{
+    type: 'user/message',
+    time: 10,
+    data: {
+      content: [{
+        type: 'text',
+        text: '本轮不可用：bili。\n\n## 持久笔记（1/50）\n\n- [猫粮] #n1 先看粉料比例\n\n## 现在\n\n时间\n\n## 本轮\n\n有 1 条新事件。',
+      }],
+    },
+  }])
+  assert.equal(messages.length, 0)
+})
+
+test('raw：gemNote 开头的本轮 prompt 仍只取新事件', () => {
+  const messages = sessionMessages([{
+    type: 'user/message',
+    time: 10,
+    data: {
+      content: [{
+        type: 'text',
+        text: '本轮不可用：bili。\n\n## 临时笔记\n\n- [猫粮] #t1 明天问体重\n\n## 现在\n\n时间\n\n## 新事件\n\n- [wechat] [主人] 主人: 在吗 [回复目标: me]\n\n## 本轮\n\n有 1 条新事件。',
+      }],
+    },
+  }])
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].role, 'event')
+  assert.match(messages[0].text, /在吗/)
+  assert.doesNotMatch(messages[0].text, /明天问体重/)
+})
+
 test('raw：没有 session 文件时退化为事件账本', () => {
   const segment = buildRawSegment({
     sessionId: 's1',

@@ -15,7 +15,7 @@
         l0Tokens: 3000
         memoryParamsJson: '{}'
         dailyTokens: 2000000
-        roundTokens: 150000
+        roundTokens: 700000
         selfWakeLimit: 12
         personaMaxChars: 6000
         roundTimeoutMs: 600000

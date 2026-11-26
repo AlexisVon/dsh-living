@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { SCHEMA_VERSION } from '../lib/db.mjs'
 import { createStore } from '../lib/store.mjs'
 import { createRuntime } from '../lib/runtime.mjs'
 import { resolveLayout } from '../lib/layout.mjs'
@@ -74,6 +75,58 @@ test('state / rounds / memory / stats 走同一通道', async (t) => {
   const stats = await handle('stats', { days: 1 })
   assert.equal(stats.ok, true)
   assert.ok(stats.value.events >= 1)
+})
+
+test('notes RPC：关键词表、条目、按编号增删改与 promote/demote', async (t) => {
+  const { handle, store } = await setup(t)
+  const added = await handle('noteAdd', { tier: 'persistent', tag: '猫粮', text: '先看粉料比例', core: true })
+  assert.equal(added.ok, true)
+  assert.equal(added.value.code, 'S1')
+  assert.equal(added.value.note, undefined, '成功只回编号与余量，不回读正文')
+  assert.equal(added.value.stats.persistent, 1)
+  assert.equal(added.value.stats.core, 1)
+  assert.equal(added.value.stats.text, 'S 1/50 · A 0/10 · B 0（只读）')
+
+  const table = await handle('notes', {})
+  assert.equal(table.ok, true)
+  assert.deepEqual(table.value.keywords, [{ tag: '猫粮', s: 1, a: 0, b: 0 }])
+  assert.match(table.value.stats.day, /^\d{4}-\d{2}-\d{2}$/)
+
+  const entries = await handle('noteEntries', { tag: '猫粮' })
+  assert.equal(entries.ok, true)
+  assert.deepEqual(entries.value.entries.map((entry) => entry.code), ['S1'])
+  assert.equal(entries.value.entries[0].readOnly, false)
+
+  const read = await handle('noteRead', { code: 'S1' })
+  assert.equal(read.ok, true)
+  assert.equal(read.value.note.text, '先看粉料比例')
+
+  const updated = await handle('noteUpdate', { code: 'S1', text: '先看粉料比例和脂肪' })
+  assert.equal(updated.ok, true)
+  assert.match(updated.value.note.text, /脂肪/)
+  assert.equal(updated.value.note.code, 'S1')
+
+  const demoted = await handle('noteDemote', { code: 'S1' })
+  assert.equal(demoted.ok, true)
+  assert.equal(demoted.value.note.tier, 'temp')
+  assert.equal(demoted.value.note.code, 'A1')
+  assert.equal(demoted.value.stats.tempToday, 1)
+
+  const promoted = await handle('notePromote', { code: 'A1', core: false })
+  assert.equal(promoted.ok, true)
+  assert.equal(promoted.value.note.tier, 'persistent')
+  assert.equal(promoted.value.note.code, 'S1')
+
+  const removed = await handle('noteDelete', { code: 'S1' })
+  assert.equal(removed.ok, true)
+  assert.equal(removed.value.removed, true)
+  assert.deepEqual((await handle('notes', {})).value.keywords, [])
+
+  await store.addNote({ tier: 'temp', tag: '旧', text: '昨天的事', day: '2026-11-30' })
+  const readonly = await handle('noteUpdate', { code: 'B1', text: '改' })
+  assert.equal(readonly.ok, false)
+  assert.match(readonly.error.message, /只读/)
+  assert.equal((await handle('noteRead', { code: 'B1' })).value.note.readOnly, true)
 })
 
 test('sessionVisibility：可见性由主会话管理器落地，state 带会话快照', async (t) => {
@@ -297,7 +350,7 @@ test('dataInfo / backup / importBackup / importCancel', async (t) => {
   assert.equal(info.ok, true)
   assert.equal(info.value.dbPath, join(home, 'data', 'life.db'))
   assert.equal(info.value.workspace, layout.workspace)
-  assert.equal(info.value.schemaVersion, 10)
+  assert.equal(info.value.schemaVersion, SCHEMA_VERSION)
 
   const backup = await handle('backup', {})
   assert.equal(backup.ok, true)

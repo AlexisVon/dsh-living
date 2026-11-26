@@ -1,5 +1,21 @@
 # Changelog
 
+## dsh-gem-petkit 0.1.3 — 2026-11-26
+
+- 状态口径：D4H 的粮仓 `state.food` 只有有/无两档（0=空、2=有粮），`food=1` 只在支持多档的机型上出现；状态里一直有 `state.bowl`（碗里余粮百分比），但之前没展示。`petkit_status` 现在输出「粮仓 有粮/空（food=N）；碗里 X%」，机型上报 `percent`/`weight` 时一并显示。缺粮报警在 food=0 时说「粮仓空了」，food=1 才说「粮量低」。
+- SKILL 补「粮量口径」：`food` 是粮仓有/无，`bowl` 是碗里百分比（不是克数）；不要用 `bowl=0` 直接判断猫饿。
+- 测试：gem-petkit 33。
+
+## 0.3.15 — 2026-11-26
+
+- 手写笔记 `living_note`（自写提示/规则 + 热区记忆补充，补自动记忆覆盖不到/不及时的部分；不是 journal）：编号是当前视图槽位——S 持久（≤50 条）、A 今天临时、B 昨天临时（各 ≤10 条），每层 40 字 + ≤5 字关键词；删除留空、不重排，新写/升/降都取最小空闲槽，跨天 A 同序号变 B。关键词索引列出全部 tag 及 S/A/B 计数，条目按 tag 查询；S 的 core（≤8）每段新会话首轮注入全文，其余 S 只进索引，A/B 全文注入，B 只读。写入成功只返回新编号 + 余量，失败大声给原因与下一步；不要求回读，避免习惯性双校验。后续轮次不重复注入；sleep 机械清理过期临时条 + 自由环节复盘；接近上限未动笔记写 `notes_ignored`；日报与 snapshot 带笔记计数。Living 新增关键词优先的「笔记」tab（记忆与日报之间）：关键词表 + 按词条目，新增、编辑、删除、升 S、降 A、core 切换；B 无操作按钮。
+- 会话续接：非 sleep 的轮换/重启/恢复失败走压缩交接——读旧会话 transcript，tool-free `living-handoff` 子 agent 压到 ≤800 字（当前任务、决定、未完成、下一步、主人约束），失败/超时/预算不足退回最近 6–10 条确定性尾部；`session.handoff` 注入后清除，TTL 72h。夜睡/手动睡眠是边界：清空交接、不续接对话；跨睡眠只走笔记/日程。轮换/恢复失败前补采旧会话 raw，`living_recollect` 以后能捞到（不再只保每晚当前会话）。
+- 热区：`recall.toResult` 带 `ts`，L0 条目显示本地日期（不再全是 `[—]`）；记忆整理 prompt 每行带 `@epoch ms`，每个 episode/fact 的时间戳必须落在自己的 raw 段内，越界夹紧并计 `tsFixed`；facts 用自己 raw 段的起点/终点，不再用批首段。
+- schema v11：新增 `notes` 表（`seq` 槽位；persistent 的 `seq` 与 temp 的 `day+seq` 各自唯一）；一次性按 raw 段修正历史 episode/fact 时间（测试库实测 episode 613 / fact 701）、清空错误 cold，并写 `change` 事件与 `schema.repair.v11` 计数（无修复的 fresh DB 不写）。
+- 修复 bundle 默认 `roundTokens: 150000` 低于 schema 下限 500000，fresh 安装会激活失败；默认改为 700000（与 schema 默认、部署文档一致）。
+- 冷区：同 label 去重后展示；夜间只保留最新 16 个 label；L0 注入写 `access(kind=inject)`，先度量不参与排序。
+- 测试：core 396 / 全仓 519。
+
 ## dsh-gem-petkit 0.1.2 — 2026-11-22
 
 - 周计划星期标签修正：小佩 `repeats` 为 1=周日…7=周六（OEM），原代码按 1=周一渲染，整体错一天。现在先转 ISO 再按周一到周日排序显示，周末组 `{1,7}` 正确显示为「周六、日」。

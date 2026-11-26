@@ -108,6 +108,29 @@ test('L0 不超 token 预算，超出即截断', () => {
   assert.equal(l0.truncated, true)
 })
 
+test('L0 注入条目保留时间戳并按本地日期显示', () => {
+  const l0 = selectL0({
+    items: [entry({ kind: 'message', text: '散热坏了' })],
+    cue: { text: '散热' },
+    budgetTokens: 400,
+    now: NOW,
+    tzOffsetMinutes: 480,
+  })
+  assert.equal(l0.recall.recalled[0].ts, NOW)
+  assert.ok(l0.text.includes('[2026-11-17]'), l0.text)
+})
+
+test('冷区同 label 去重，只显示一条', () => {
+  const cold = [
+    ...Array.from({ length: 6 }, () => ({ keyword: '广告', lastTs: NOW, label20: '广告太多' })),
+    { keyword: '沙盒', lastTs: NOW, label20: 'iOS 沙盒' },
+  ]
+  const l0 = buildL0({ recalled: [], cold, now: NOW })
+  assert.equal(l0.coldCount, 2)
+  assert.equal(l0.text.split('广告太多').length - 1, 1)
+  assert.ok(l0.text.includes('iOS 沙盒'))
+})
+
 test('L0 为「cue 命中但历史最冷」保留一个位置', () => {
   const hot = entry({ id: 'hot', text: '最近总在说散热', strength: 0.9 })
   const cold = entry({ id: 'cold', text: '最早提过一次散热', strength: 0.05 })

@@ -115,3 +115,18 @@ test('events：电池供电低电量只在 pim=2 时触发', () => {
   })
   assert.equal(mains.length, 0)
 })
+
+test('events：粮仓空与粮量低措辞分开', () => {
+  const low = alarmEvents({
+    detail: { state: { food: 1, desiccantLeftDays: 30, pim: 1, errorCode: 0 } },
+    config, state: {}, device, day: '20261126',
+  })
+  const lowEvent = low.find((event) => event.meta.alarm === 'food_low')
+  assert.match(lowEvent.text, /粮量低/)
+  const empty = alarmEvents({
+    detail: { state: { food: 0, desiccantLeftDays: 30, pim: 1, errorCode: 0 } },
+    config, state: {}, device, day: '20261126',
+  })
+  const emptyEvent = empty.find((event) => event.meta.alarm === 'food_low')
+  assert.match(emptyEvent.text, /粮仓空了/)
+})

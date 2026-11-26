@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-export const SCHEMA_VERSION = 10
+export const SCHEMA_VERSION = 11
 
 export function openDatabase(path, { readOnly = false, busyTimeoutMs = 3000 } = {}) {
   if (typeof path !== 'string' || path === '') throw new RangeError('数据库路径必填')
@@ -316,4 +316,103 @@ const MIGRATIONS = [
       CREATE INDEX idx_memory_vectors_model_ts ON memory_vectors(model, ts);
     `)
   },
+  (db) => {
+    db.exec(`
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY,
+        seq INTEGER NOT NULL,
+        tier TEXT NOT NULL CHECK (tier IN ('persistent','temp')),
+        tag TEXT NOT NULL,
+        text TEXT NOT NULL,
+        core INTEGER NOT NULL DEFAULT 0,
+        day TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_notes_tier_day ON notes(tier, day);
+      CREATE INDEX idx_notes_tag ON notes(tag);
+      CREATE UNIQUE INDEX idx_notes_persistent_seq ON notes(seq) WHERE tier = 'persistent';
+      CREATE UNIQUE INDEX idx_notes_temp_slot ON notes(day, seq) WHERE tier = 'temp';
+    `)
+    const repair = repairMemoryTimestamps(db)
+    if (repair.episodes > 0 || repair.facts > 0 || repair.cold > 0) {
+      db.prepare('INSERT OR REPLACE INTO state(key, value) VALUES(?,?)').run('schema.repair.v11', JSON.stringify(repair))
+      db.prepare(
+        'INSERT OR REPLACE INTO events(id, ts, kind, actor, source, payload, session_id, refs) VALUES(?,?,?,?,?,?,?,?)',
+      ).run(
+        'ev_schema_v11_repair',
+        Date.now(),
+        'change',
+        null,
+        'living',
+        JSON.stringify({
+          text: `系统：记忆时间修复（episode ${repair.episodes} / fact ${repair.facts} / vector ${repair.vectors} / cold ${repair.cold}）`,
+          meta: { silent: true, system: true, repair: 'v11' },
+        }),
+        null,
+        '[]',
+      )
+    }
+  },
 ]
+
+function repairMemoryTimestamps(db) {
+  const repair = { episodes: 0, facts: 0, cold: 0 }
+  const segment = db.prepare('SELECT ts_start, ts_end FROM raw_segments WHERE id = ?')
+  const updateEpisode = db.prepare('UPDATE episodes SET ts_start = ?, ts_end = ? WHERE id = ?')
+  for (const row of db.prepare(
+    "SELECT id, ts_start, ts_end, raw_refs FROM episodes WHERE raw_refs IS NOT NULL AND raw_refs != '[]' AND raw_refs != ''",
+  ).all()) {
+    const refs = parseRawRefs(row.raw_refs)
+    const seg = refs.length > 0 ? segment.get(refs[0]) : null
+    if (!seg) continue
+    const start = clampRange(row.ts_start, seg.ts_start, seg.ts_end)
+    const end = clampRange(row.ts_end ?? start, seg.ts_start, seg.ts_end)
+    const lo = Math.min(start, end)
+    const hi = Math.max(start, end)
+    if (lo !== row.ts_start || hi !== row.ts_end) {
+      updateEpisode.run(lo, hi, row.id)
+      repair.episodes += 1
+    }
+  }
+  const updateFact = db.prepare('UPDATE facts SET first_seen = ?, last_seen = ? WHERE id = ?')
+  for (const row of db.prepare(
+    "SELECT id, first_seen, last_seen, raw_refs FROM facts WHERE raw_refs IS NOT NULL AND raw_refs != '[]' AND raw_refs != ''",
+  ).all()) {
+    const refs = parseRawRefs(row.raw_refs)
+    const seg = refs.length > 0 ? segment.get(refs[0]) : null
+    if (!seg) continue
+    const start = clampRange(row.first_seen ?? seg.ts_start, seg.ts_start, seg.ts_end)
+    const end = clampRange(row.last_seen ?? row.first_seen ?? seg.ts_end, seg.ts_start, seg.ts_end)
+    const lo = Math.min(start, end)
+    const hi = Math.max(start, end)
+    if (lo !== row.first_seen || hi !== row.last_seen) {
+      updateFact.run(lo, hi, row.id)
+      repair.facts += 1
+    }
+  }
+  repair.vectors = db.prepare(
+    "UPDATE memory_vectors SET ts = (SELECT e.ts_start FROM episodes e WHERE e.id = memory_vectors.id) WHERE source = 'items' AND kind = 'episode' AND EXISTS (SELECT 1 FROM episodes e WHERE e.id = memory_vectors.id) AND ts != (SELECT e.ts_start FROM episodes e WHERE e.id = memory_vectors.id)",
+  ).run().changes
+  repair.vectors += db.prepare(
+    "UPDATE memory_vectors SET ts = (SELECT f.last_seen FROM facts f WHERE f.id = memory_vectors.id) WHERE source = 'items' AND kind = 'fact' AND EXISTS (SELECT 1 FROM facts f WHERE f.id = memory_vectors.id) AND ts != (SELECT f.last_seen FROM facts f WHERE f.id = memory_vectors.id)",
+  ).run().changes
+  repair.cold = db.prepare('SELECT COUNT(*) AS n FROM cold').get().n
+  db.prepare('DELETE FROM cold').run()
+  return repair
+}
+
+function parseRawRefs(value) {
+  try {
+    const parsed = JSON.parse(value ?? '[]')
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+function clampRange(value, lo, hi) {
+  if (!Number.isFinite(value)) return lo
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return value
+  return Math.min(hi, Math.max(lo, value))
+}

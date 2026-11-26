@@ -25,9 +25,12 @@ import { createMemoryExtractor, MEMORY_PRESET_PLUGINS } from './lib/memory-extra
 import { parseMemoryParams } from './lib/memory-config.mjs'
 import { createRecollector } from './lib/recollector.mjs'
 import { RECOLLECT_DEFAULTS, RECOLLECT_PRESET_PLUGINS } from './lib/recollect.mjs'
+import { createHandoffCompressor, HANDOFF_PRESET_PLUGINS, buildHandoffPrompt, clipHandoffText, tailFromRaw } from './lib/handoff.mjs'
+import { formatNoteCorpus, shiftDay } from './lib/notes.mjs'
+import { buildRawSegment } from './lib/raw.mjs'
 import { allocateLivingSessionTitle } from './lib/session-title.mjs'
 import { LIMITER_PRESET_PLUGINS } from './lib/limiter.mjs'
-import { autoWakeEstimate, parseTimeOfDay, scaledNow } from './lib/clock.mjs'
+import { autoWakeEstimate, dayKey, parseTimeOfDay, scaledNow } from './lib/clock.mjs'
 import { ADMIN_CHANNEL, ADMIN_ENDPOINT, createAdminFetch } from './lib/rpc.mjs'
 
 export const name = 'living'
@@ -68,6 +71,7 @@ export const Config = z.object({
   personaMaxChars: z.number().default(6000).extra('volatile', true),
   roundTimeoutMs: z.number().default(600000).extra('volatile', true),
   recollectTimeoutMs: z.number().default(RECOLLECT_DEFAULTS.timeoutMs).extra('volatile', true),
+  handoffTimeoutMs: z.number().default(60000).extra('volatile', true),
   presetId: z.string().default('living').extra('volatile', true),
   limiterEnabled: z.boolean().default(true).extra('volatile', true),
   gemSilenceMinutes: z.number().default(10).extra('volatile', true),
@@ -185,6 +189,92 @@ export async function apply(ctx, config) {
   const recollector = (input) => (recollectPresetReady && recollectImpl
     ? recollectImpl(input)
     : Promise.resolve({ outcome: 'error', errorCode: 'recollect_unavailable', tokens: 0, text: '' }))
+  const handoffPresetId = `${cfg.presetId}-handoff`
+  let handoffPresetReady = false
+  let handoffImpl = null
+  const handoffCompressor = (input) => (handoffPresetReady && handoffImpl
+    ? handoffImpl(input)
+    : Promise.resolve({ ok: false, error: 'handoff_preset_unavailable', tokens: 0 }))
+
+  async function captureHandoff(sessionId, reason, { allowCompression = true } = {}) {
+    const id = String(sessionId ?? '')
+    if (id === '') return null
+    const existing = store.getState('session.handoff')
+    if (existing && existing.fromSessionId === id && String(existing.text ?? '').trim() !== '') return existing
+    const nowMs = simNow()
+    let raw = null
+    try {
+      raw = buildRawSegment({
+        sessionId: id,
+        sessionRoot: cfg.sessionRoot || null,
+        kind: reason === 'rest' ? 'rest' : 'restart',
+        nowMs,
+        events: store.listEvents({ since: nowMs - 24 * 3600 * 1000, limit: 1000 }),
+      })
+      // Only a real transcript is a handoff source; event fallback is not the conversation.
+      if (raw && raw.payload?.source !== 'session') raw = null
+      if (raw) {
+        await store.appendRawSegment({
+          id: raw.id,
+          sessionId: id,
+          kind: raw.kind,
+          tsStart: raw.tsStart,
+          tsEnd: raw.tsEnd,
+          payload: raw.payload,
+          createdAt: nowMs,
+        })
+      }
+    } catch (error) {
+      console.warn(`living: 交接 raw 采集失败 ${id}: ${error.message}`)
+    }
+    const day = dayKey(nowMs)
+    const notes = [
+      ...store.listNotes({ tier: 'persistent', limit: 200 }),
+      ...store.listNotes({ tier: 'temp', day, limit: 100 }),
+      ...store.listNotes({ tier: 'temp', day: shiftDay(day, -1), limit: 100 }),
+    ]
+    const noteText = formatNoteCorpus(notes, { today: day, yesterday: shiftDay(day, -1) })
+    let source = null
+    let text = ''
+    let tokens = 0
+    let error = null
+    if (allowCompression && handoffPresetReady && raw) {
+      try {
+        const result = await handoffCompressor({ prompt: buildHandoffPrompt({ raw, notes: noteText, reason }) })
+        tokens = Number(result?.tokens) || 0
+        if (result?.ok && String(result.text ?? '').trim() !== '') {
+          text = clipHandoffText(result.text)
+          source = 'compressed'
+        } else {
+          error = result?.error ?? 'empty'
+        }
+      } catch (caught) {
+        error = caught.message
+      }
+    }
+    if (text === '' && raw) {
+      text = tailFromRaw(raw)
+      if (text !== '') source = 'tail'
+    }
+    if (text === '') {
+      await store.appendEvent({
+        kind: 'session_handoff_failed',
+        ts: nowMs,
+        source: 'living',
+        payload: { reason, fromSessionId: id, error: error ?? 'empty' },
+      })
+      return null
+    }
+    const stored = { text, fromSessionId: id, at: nowMs, source, reason }
+    await store.setState('session.handoff', stored)
+    await store.appendEvent({
+      kind: 'session_handoff',
+      ts: nowMs,
+      source: 'living',
+      payload: { fromSessionId: id, source, reason, chars: text.length, tokens, error },
+    })
+    return stored
+  }
 
   const session = createSessionRunner(ctx, {
     store,
@@ -192,6 +282,7 @@ export async function apply(ctx, config) {
     workspace,
     presetId: cfg.presetId,
     roundTokens: cfg.roundTokens,
+    captureHandoff,
     sessionTitle: async () => {
       const allocated = allocateLivingSessionTitle(Date.now(), { previous: store.getState('session.titleSeq') })
       await store.setState('session.titleSeq', allocated.state)
@@ -238,6 +329,17 @@ export async function apply(ctx, config) {
     timeoutMs: cfg.recollectTimeoutMs,
     archive: (sessionId) => archiveSession(ctx, sessionId),
     logger: console,
+  })
+  handoffImpl = createHandoffCompressor(ctx, {
+    workspace,
+    presetId: handoffPresetId,
+    timeoutMs: cfg.handoffTimeoutMs,
+    archive: (sessionId) => archiveSession(ctx, sessionId),
+    logger: console,
+    setup: async (agentCtx) => {
+      await ctx.agentPresets.mount(agentCtx, handoffPresetId)
+      restrictAllTools(agentCtx, '交接压缩')
+    },
   })
 
   /**
@@ -329,6 +431,15 @@ export async function apply(ctx, config) {
     console.error(`living: 回想 preset 注册失败，回想不可用: ${error.message}`)
   }
   ctx.effect(() => () => disposeRecollectPreset?.().catch(() => {}))
+
+  let disposeHandoffPreset = null
+  try {
+    disposeHandoffPreset = await registerHandoffPreset(ctx, handoffPresetId)
+    handoffPresetReady = true
+  } catch (error) {
+    console.error(`living: 交接 preset 注册失败，重启时将只写确定性尾部: ${error.message}`)
+  }
+  ctx.effect(() => () => disposeHandoffPreset?.().catch(() => {}))
 
   try {
     channelSupervisor = createGemChannelSupervisor({
@@ -429,7 +540,7 @@ function normalizeConfig(config) {
  * archived the host's pre-step gate refuses turns, so unarchive always precedes
  * a round.
  */
-export function createSessionRunner(ctx, { store, home, workspace = home, presetId, roundTokens, sessionTitle = null, logger = console }) {
+export function createSessionRunner(ctx, { store, home, workspace = home, presetId, roundTokens, captureHandoff = null, sessionTitle = null, logger = console }) {
   let handle = null
   let sessionId = null
   let startedAt = null
@@ -599,12 +710,34 @@ export function createSessionRunner(ctx, { store, home, workspace = home, preset
           logger.warn?.(`living: 主会话恢复失败（${stored.id}），改用新会话: ${error.message}`)
         }
       }
+      if (typeof captureHandoff === 'function') {
+        try {
+          const handoff = await captureHandoff(stored.id, 'resume_failed')
+          if (handoff) logger.log?.(`living: 旧会话交接已保存（${handoff.source}，${handoff.text.length} 字）`)
+        } catch (handoffError) {
+          logger.warn?.(`living: 旧会话交接失败（${stored.id}）: ${handoffError.message}`)
+        }
+      }
     }
     return createAgent(signal)
   }
 
   async function rotateNow(reason) {
     const id = sessionId ?? storedSession()?.id
+    if (reason === 'night') {
+      try {
+        await store.setState('session.handoff', null)
+      } catch (error) {
+        logger.warn?.(`living: 清空交接失败: ${error.message}`)
+      }
+    } else if (id && typeof captureHandoff === 'function') {
+      try {
+        const handoff = await captureHandoff(id, reason, { allowCompression: reason !== 'rest' })
+        if (handoff) logger.log?.(`living: 会话交接已保存（${handoff.source}，${handoff.text.length} 字）`)
+      } catch (error) {
+        logger.warn?.(`living: 会话交接失败（${id}）: ${error.message}`)
+      }
+    }
     if (handle) {
       const current = handle
       handle = null
@@ -778,6 +911,18 @@ async function registerRecollectPreset(ctx, presetId) {
     plugins: [...RECOLLECT_PRESET_PLUGINS],
   })
   console.log(`living: 回想 preset 已注册（${presetId}）`)
+  return dispose
+}
+
+async function registerHandoffPreset(ctx, presetId) {
+  const dispose = await ctx.agentPresets.register({
+    id: presetId,
+    name: 'Living handoff',
+    description: 'Compress the outgoing conversation into a handoff; no tools',
+    order: 95,
+    plugins: [...HANDOFF_PRESET_PLUGINS],
+  })
+  console.log(`living: 交接 preset 已注册（${presetId}）`)
   return dispose
 }
 

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { FAILURE_CODES, isRetryable } from 'dsh-living-protocol'
 import { openDatabase, transaction } from './db.mjs'
 import { lineDiff } from './diff.mjs'
+import { NOTES_LIMITS, assertTier, normalizeNoteText, normalizeTag } from './notes.mjs'
 import { tokenizeForIndex } from './text.mjs'
 
 export const OUTBOX_LEASE_MS = 5 * 60 * 1000
@@ -617,6 +618,26 @@ export function createStore({ path, now = Date.now } = {}) {
       return db.prepare(sql).all(...params).map(mapCold)
     },
 
+    async pruneCold({ keepLabels = 16 } = {}) {
+      const limit = Math.max(0, Math.floor(Number(keepLabels) || 0))
+      return withWriteLock(() => {
+        if (limit === 0) return db.prepare('DELETE FROM cold').run().changes
+        const rows = db.prepare('SELECT rowid, keyword, label_20char, last_ts FROM cold ORDER BY last_ts DESC, rowid DESC').all()
+        const keep = new Set()
+        const remove = []
+        for (const row of rows) {
+          const label = row.label_20char || row.keyword || ''
+          if (!keep.has(label)) {
+            if (keep.size < limit) keep.add(label)
+            else remove.push(row.rowid)
+          }
+        }
+        const statement = db.prepare('DELETE FROM cold WHERE rowid = ?')
+        for (const rowid of remove) statement.run(rowid)
+        return remove.length
+      })
+    },
+
     /** Append a persona snapshot; `diff` against the previous version is computed unless supplied. */
     getPersonaDoc(kind) {
       const row = db.prepare('SELECT * FROM persona_docs WHERE kind = ?').get(String(kind ?? ''))
@@ -662,6 +683,195 @@ export function createStore({ path, now = Date.now } = {}) {
            VALUES(?,?,?,?,?,?)`,
         ).run(id, date, ts, String(text).trim(), source, createdAt)
         return id
+      })
+    },
+
+    listNotes({ tier = null, tag = null, day = null, limit = 200 } = {}) {
+      const where = []
+      const params = []
+      if (tier != null) {
+        where.push('tier = ?')
+        params.push(assertTier(tier))
+      }
+      if (tag != null) {
+        where.push('tag = ?')
+        params.push(normalizeTag(tag))
+      }
+      if (day != null) {
+        where.push('day = ?')
+        params.push(String(day))
+      }
+      const sql = `SELECT * FROM notes${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY CASE tier WHEN 'persistent' THEN 0 ELSE 1 END, day ASC, seq ASC LIMIT ?`
+      params.push(assertLimit(limit))
+      return db.prepare(sql).all(...params).map(mapNote)
+    },
+
+    getNote(id) {
+      const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(String(id ?? ''))
+      return row ? mapNote(row) : null
+    },
+
+    getNoteBySeq({ tier, seq, day = null } = {}) {
+      const cleanTier = assertTier(tier)
+      const row = cleanTier === 'persistent'
+        ? db.prepare("SELECT * FROM notes WHERE tier = 'persistent' AND seq = ?").get(Number(seq))
+        : db.prepare("SELECT * FROM notes WHERE tier = 'temp' AND day = ? AND seq = ?").get(String(day), Number(seq))
+      return row ? mapNote(row) : null
+    },
+
+    countNotes({ tier = null, day = null, core = null } = {}) {
+      const where = []
+      const params = []
+      if (tier != null) {
+        where.push('tier = ?')
+        params.push(assertTier(tier))
+      }
+      if (day != null) {
+        where.push('day = ?')
+        params.push(String(day))
+      }
+      if (core != null) {
+        where.push('core = ?')
+        params.push(core ? 1 : 0)
+      }
+      const sql = `SELECT COUNT(*) AS n FROM notes${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`
+      return db.prepare(sql).get(...params).n
+    },
+
+    noteStats({ day = null, yesterday = null } = {}) {
+      return {
+        persistent: store.countNotes({ tier: 'persistent' }),
+        core: store.countNotes({ tier: 'persistent', core: true }),
+        tempToday: day ? store.countNotes({ tier: 'temp', day }) : 0,
+        tempYesterday: yesterday ? store.countNotes({ tier: 'temp', day: yesterday }) : 0,
+      }
+    },
+
+    async addNote({ id = `n_${randomUUID()}`, tier, tag, text, core = false, day = null, createdAt = now(), updatedAt = createdAt }) {
+      const cleanTier = assertTier(tier)
+      const cleanTag = normalizeTag(tag)
+      const cleanText = normalizeNoteText(text)
+      if (cleanTier === 'temp' && core === true) throw new RangeError('临时笔记不能设 core')
+      const cleanDay = cleanTier === 'temp' ? String(day ?? '') : null
+      if (cleanTier === 'temp' && !/^\d{4}-\d{2}-\d{2}$/.test(cleanDay)) {
+        throw new RangeError('临时笔记需要 YYYY-MM-DD 的 day')
+      }
+      return withWriteLock(() => transaction(db, () => {
+        if (cleanTier === 'persistent') {
+          const total = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'persistent'").get().n
+          if (total >= NOTES_LIMITS.persistentMax) {
+            throw new RangeError(`持久笔记已满（${total}/${NOTES_LIMITS.persistentMax}）；先合并或删除一条`)
+          }
+          if (core === true) {
+            const coreCount = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'persistent' AND core = 1").get().n
+            if (coreCount >= NOTES_LIMITS.coreMax) {
+              throw new RangeError(`core 笔记已满（${coreCount}/${NOTES_LIMITS.coreMax}）；先把一条 core 降为普通`)
+            }
+          }
+        } else {
+          const total = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'temp' AND day = ?").get(cleanDay).n
+          if (total >= NOTES_LIMITS.tempPerDay) {
+            throw new RangeError(`今天临时笔记已满（${total}/${NOTES_LIMITS.tempPerDay}）；先删一条或升持久`)
+          }
+        }
+        const seq = smallestFreeSeq(db, cleanTier, cleanDay)
+        db.prepare(
+          'INSERT INTO notes(id, seq, tier, tag, text, core, day, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+        ).run(id, seq, cleanTier, cleanTag, cleanText, core === true ? 1 : 0, cleanDay, createdAt, updatedAt)
+        return mapNote(db.prepare('SELECT * FROM notes WHERE id = ?').get(id))
+      }))
+    },
+
+    async updateNote(id, { tag, text, core, updatedAt = now() } = {}) {
+      const noteId = String(id ?? '')
+      return withWriteLock(() => transaction(db, () => {
+        const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId)
+        if (!row) throw new RangeError(`未知的笔记 id: ${noteId}`)
+        const nextTag = tag === undefined ? row.tag : normalizeTag(tag)
+        const nextText = text === undefined ? row.text : normalizeNoteText(text)
+        const nextCore = core === undefined ? row.core === 1 : core === true
+        if (row.tier === 'temp' && nextCore) throw new RangeError('临时笔记不能设 core')
+        if (row.tier === 'persistent' && nextCore && row.core !== 1) {
+          const coreCount = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'persistent' AND core = 1").get().n
+          if (coreCount >= NOTES_LIMITS.coreMax) {
+            throw new RangeError(`core 笔记已满（${coreCount}/${NOTES_LIMITS.coreMax}）；先把一条 core 降为普通`)
+          }
+        }
+        db.prepare('UPDATE notes SET tag = ?, text = ?, core = ?, updated_at = ? WHERE id = ?').run(
+          nextTag,
+          nextText,
+          nextCore ? 1 : 0,
+          updatedAt,
+          noteId,
+        )
+        return mapNote(db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId))
+      }))
+    },
+
+    async deleteNote(id) {
+      const noteId = String(id ?? '')
+      return withWriteLock(() => {
+        const changes = db.prepare('DELETE FROM notes WHERE id = ?').run(noteId).changes
+        return { removed: changes > 0 }
+      })
+    },
+
+    async promoteNote(id, { core = false, updatedAt = now() } = {}) {
+      const noteId = String(id ?? '')
+      return withWriteLock(() => transaction(db, () => {
+        const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId)
+        if (!row) throw new RangeError(`未知的笔记 id: ${noteId}`)
+        if (row.tier !== 'temp') throw new RangeError(`笔记 ${noteId} 已经是持久笔记`)
+        const total = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'persistent'").get().n
+        if (total >= NOTES_LIMITS.persistentMax) {
+          throw new RangeError(`持久笔记已满（${total}/${NOTES_LIMITS.persistentMax}）；先合并或删除一条`)
+        }
+        if (core === true) {
+          const coreCount = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'persistent' AND core = 1").get().n
+          if (coreCount >= NOTES_LIMITS.coreMax) {
+            throw new RangeError(`core 笔记已满（${coreCount}/${NOTES_LIMITS.coreMax}）；先把一条 core 降为普通`)
+          }
+        }
+        db.prepare('UPDATE notes SET tier = ?, seq = ?, day = NULL, core = ?, updated_at = ? WHERE id = ?').run(
+          'persistent',
+          smallestFreeSeq(db, 'persistent'),
+          core === true ? 1 : 0,
+          updatedAt,
+          noteId,
+        )
+        return mapNote(db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId))
+      }))
+    },
+
+    async demoteNote(id, { day, updatedAt = now() } = {}) {
+      const noteId = String(id ?? '')
+      const cleanDay = String(day ?? '')
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDay)) throw new RangeError('降为临时笔记需要 YYYY-MM-DD 的 day')
+      return withWriteLock(() => transaction(db, () => {
+        const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId)
+        if (!row) throw new RangeError(`未知的笔记 id: ${noteId}`)
+        if (row.tier !== 'persistent') throw new RangeError(`笔记 ${noteId} 已经是临时笔记`)
+        const total = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE tier = 'temp' AND day = ?").get(cleanDay).n
+        if (total >= NOTES_LIMITS.tempPerDay) {
+          throw new RangeError(`今天临时笔记已满（${total}/${NOTES_LIMITS.tempPerDay}）；先删一条`)
+        }
+        db.prepare('UPDATE notes SET tier = ?, seq = ?, day = ?, core = 0, updated_at = ? WHERE id = ?').run(
+          'temp',
+          smallestFreeSeq(db, 'temp', cleanDay),
+          cleanDay,
+          updatedAt,
+          noteId,
+        )
+        return mapNote(db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId))
+      }))
+    },
+
+    async pruneTempNotes({ keepDays = [] } = {}) {
+      const keep = [...new Set(keepDays.map(String).filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)))]
+      if (keep.length === 0) return 0
+      return withWriteLock(() => {
+        const placeholders = keep.map(() => '?').join(',')
+        return db.prepare(`DELETE FROM notes WHERE tier = 'temp' AND day NOT IN (${placeholders})`).run(...keep).changes
       })
     },
 
@@ -1134,6 +1344,33 @@ function mapCold(row) {
     lastTs: row.last_ts,
     importance: row.importance,
     fidelity: row.fidelity,
+  }
+}
+
+/** Smallest free slot in the target group; deletes leave gaps and nothing is renumbered. */
+function smallestFreeSeq(db, tier, day = null) {
+  const rows = tier === 'persistent'
+    ? db.prepare("SELECT seq FROM notes WHERE tier = 'persistent' ORDER BY seq").all()
+    : db.prepare("SELECT seq FROM notes WHERE tier = 'temp' AND day = ? ORDER BY seq").all(day)
+  let seq = 1
+  for (const row of rows) {
+    if (row.seq > seq) break
+    if (row.seq === seq) seq += 1
+  }
+  return seq
+}
+
+function mapNote(row) {
+  return {
+    id: row.id,
+    seq: row.seq,
+    tier: row.tier,
+    tag: row.tag,
+    text: row.text,
+    core: row.core === 1,
+    day: row.day ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
