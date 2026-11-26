@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createStore } from '../lib/store.mjs'
-import { NOTES_LIMITS, formatNotesPrompt, noteCode, normalizeNoteText, normalizeTag, shiftDay } from '../lib/notes.mjs'
+import { NOTES_LIMITS, formatNotesPrompt, listNoteKeywords, noteCode, normalizeNoteText, normalizeTag, shiftDay } from '../lib/notes.mjs'
 
 function open(t) {
   const dir = mkdtempSync(join(tmpdir(), 'living-notes-'))
@@ -109,6 +109,17 @@ test('notes：code 由视图日期决定，B 之外为 null', () => {
   assert.equal(noteCode({ tier: 'temp', seq: 2, day: '2026-11-26' }, window), 'A2')
   assert.equal(noteCode({ tier: 'temp', seq: 1, day: '2026-11-25' }, window), 'B1')
   assert.equal(noteCode({ tier: 'temp', seq: 4, day: '2026-11-24' }, window), null)
+})
+
+test('notes：关键词带视图序编号（S→A→B）', () => {
+  const keywords = listNoteKeywords({
+    persistent: [{ tag: '猫粮', seq: 2 }, { tag: 'B站', seq: 1 }],
+    today: [{ tag: '猫粮', seq: 1 }],
+    yesterday: [{ tag: '猫粮', seq: 3 }],
+  })
+  const cat = keywords.find((keyword) => keyword.tag === '猫粮')
+  assert.deepEqual(cat.codes, ['S2', 'A1', 'B3'])
+  assert.deepEqual([cat.s, cat.a, cat.b], [1, 1, 1])
 })
 
 test('notes：prompt 注入 core 全文、关键词索引与 A/B 全文', () => {

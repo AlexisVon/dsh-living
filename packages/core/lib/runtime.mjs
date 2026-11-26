@@ -2671,6 +2671,7 @@ export function createRuntime({
         const view = notesView()
         return {
           keywords: listNoteKeywords({ persistent: view.persistent, today: view.today, yesterday: view.yesterdayNotes }),
+          entries: [...view.persistent, ...view.today, ...view.yesterdayNotes],
           stats: notesStatus(),
         }
       },

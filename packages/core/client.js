@@ -2980,11 +2980,11 @@ window.__ModuleLoader__.load({
       const [nonce, setNonce] = React.useState(0)
       const data = useRpc('notes', { nonce }, 15_000)
       const keywords = data.value?.keywords ?? []
+      const allEntries = data.value?.entries ?? []
       const stats = data.value?.stats ?? {}
+      const [view, setView] = React.useState('keywords')
       const [selectedTag, setSelectedTag] = React.useState(null)
-      const [entries, setEntries] = React.useState(null)
-      const [entriesError, setEntriesError] = React.useState(null)
-      const entriesTagRef = React.useRef(null)
+      const entries = selectedTag == null ? [] : allEntries.filter((note) => note.tag === selectedTag)
       const [draft, setDraft] = React.useState({ tier: 'persistent', tag: '', text: '', core: false })
       const [editing, setEditing] = React.useState(null)
       const [deleting, setDeleting] = React.useState(null)
@@ -2998,23 +2998,6 @@ window.__ModuleLoader__.load({
           setSelectedTag(keywords[0].tag)
         }
       }, [keywords, selectedTag])
-
-      React.useEffect(() => {
-        if (selectedTag == null) {
-          setEntries([])
-          return undefined
-        }
-        if (entriesTagRef.current !== selectedTag) {
-          entriesTagRef.current = selectedTag
-          setEntries(null)
-          setEntriesError(null)
-        }
-        let alive = true
-        call('noteEntries', { tag: selectedTag })
-          .then((value) => { if (alive) { setEntries(value.entries ?? []); setEntriesError(null) } })
-          .catch((err) => { if (alive) setEntriesError(err.message) })
-        return () => { alive = false }
-      }, [selectedTag, nonce, data.value])
 
       const reset = () => {
         setDraft({ tier: 'persistent', tag: '', text: '', core: false })
@@ -3063,17 +3046,16 @@ window.__ModuleLoader__.load({
       const demote = (note) => run('noteDemote', { code: note.code }, '已降为 A').catch(() => {})
       const actionButton = (label, onClick, variant = 'outline') => h(Button, { variant, size: 'sm', disabled: busy, onClick }, label)
       const keywordRow = (keyword) => {
-        const counts = [keyword.s > 0 ? `S${keyword.s}` : null, keyword.a > 0 ? `A${keyword.a}` : null, keyword.b > 0 ? `B${keyword.b}` : null].filter(Boolean).join(' ')
-        const active = keyword.tag === selectedTag
+        const active = view === 'keywords' && keyword.tag === selectedTag
         return h('div', {
           key: keyword.tag,
           className: 'living-row',
           style: { cursor: 'pointer', background: active ? 'rgba(64, 128, 255, 0.10)' : 'transparent' },
-          onClick: () => setSelectedTag(keyword.tag),
+          onClick: () => { setView('keywords'); setSelectedTag(keyword.tag) },
         },
           h('span', { className: 'living-chip' }, keyword.tag),
-          h('span', { className: 'living-muted living-mono' }, counts),
-          h('span', { className: 'living-muted', style: { marginLeft: 'auto' } }, `${keyword.s + keyword.a + keyword.b} 条`))
+          h('span', { className: 'living-muted living-mono' }, keyword.codes.join(' ')),
+          h('span', { className: 'living-muted', style: { marginLeft: 'auto' } }, `${keyword.codes.length} 条`))
       }
       const entryRow = (note) => {
         const persistent = note.code.startsWith('S')
@@ -3090,6 +3072,11 @@ window.__ModuleLoader__.load({
           persistent ? actionButton('降 A', () => demote(note)) : null,
           note.readOnly ? null : actionButton('删', () => setDeleting(note)))
       }
+      const noteGroups = [
+        ['S 持久', allEntries.filter((note) => note.code.startsWith('S'))],
+        ['A 今天', allEntries.filter((note) => note.code.startsWith('A'))],
+        ['B 昨天（只读）', allEntries.filter((note) => note.code.startsWith('B'))],
+      ].filter(([, list]) => list.length > 0)
 
       return h('div', { className: 'living-field' },
         h('div', { className: 'living-stats' },
@@ -3132,24 +3119,34 @@ window.__ModuleLoader__.load({
             }, busy ? '保存中…' : editing ? '保存修改' : '写入')),
           editing ? h(Button, { variant: 'outline', size: 'sm', onClick: reset }, '取消编辑') : null,
           h('div', { className: 'living-field-help' }, '这些是它写给自己的提示词/规则和热区记忆，补自动记忆覆盖不到/不及时的部分；不是 journal。S 持久（50 条 × 40 字，core ≤8 每会话注入全文，其余按关键词索引查）；A 今天、B 昨天（每天 10 条 × 40 字，全文注入；B 只读，过第二个 sleep 过期）。满了会大声失败。')),
+        h('div', { className: 'living-controls' },
+          h(Pill, { active: view === 'keywords', onClick: () => setView('keywords') }, '关键词查看'),
+          h(Pill, { active: view === 'all', onClick: () => setView('all') }, '全部笔记')),
+        view === 'keywords'
+          ? h('section', { className: 'living-card' },
+              h('div', { className: 'living-card-head' },
+                h('span', null, '关键词'),
+                h('div', { className: 'living-controls' },
+                  h('span', { className: 'living-muted' }, `${keywords.length} 个`),
+                  actionButton('刷新', refresh))),
+              keywords.length === 0
+                ? h('div', { className: 'living-empty' }, '还没有关键词')
+                : h('div', { className: 'living-field' }, ...keywords.map(keywordRow)))
+          : null,
         h('section', { className: 'living-card' },
           h('div', { className: 'living-card-head' },
-            h('span', null, '关键词'),
-            h('div', { className: 'living-controls' },
-              h('span', { className: 'living-muted' }, `${keywords.length} 个`),
-              actionButton('刷新', refresh))),
-          keywords.length === 0
-            ? h('div', { className: 'living-empty' }, '还没有关键词')
-            : h('div', { className: 'living-field' }, ...keywords.map(keywordRow))),
-        h('section', { className: 'living-card' },
-          h('div', { className: 'living-card-head' },
-            h('span', null, selectedTag ? `关键词：${selectedTag}` : '条目'),
-            h('span', { className: 'living-muted' }, selectedTag && entries ? `${entries.length} 条` : '')),
-          entriesError ? h('div', { className: 'living-field-error' }, `读取失败：${entriesError}`) : null,
-          selectedTag == null
-            ? h('div', { className: 'living-empty' }, '还没有笔记；先写一条')
-            : entries == null
-              ? h('div', { className: 'living-empty' }, '加载中…')
+            h('span', null, view === 'all' ? '全部笔记' : selectedTag ? `关键词：${selectedTag}` : '条目'),
+            h('span', { className: 'living-muted' },
+              data.value == null ? '加载中…' : view === 'all' ? `${allEntries.length} 条` : selectedTag ? `${entries.length} 条` : '')),
+          view === 'all'
+            ? allEntries.length === 0
+              ? h('div', { className: 'living-empty' }, data.value == null ? '加载中…' : '还没有笔记；先写一条')
+              : h('div', { className: 'living-field' },
+                  ...noteGroups.map(([label, list]) => h('div', { key: label, className: 'living-field' },
+                    h('div', { className: 'living-field-label' }, label),
+                    ...list.map(entryRow))))
+            : selectedTag == null
+              ? h('div', { className: 'living-empty' }, data.value == null ? '加载中…' : '还没有笔记；先写一条')
               : entries.length === 0
                 ? h('div', { className: 'living-empty' }, '这个词下没有笔记')
                 : h('div', { className: 'living-field' }, ...entries.map(entryRow))),

@@ -1005,7 +1005,8 @@ test('笔记服务：S/A/B 编号、关键词表、B 只读', async (t) => {
   const a1 = await service.notesAdd({ tier: 'temp', tag: '猫粮', text: '明天问体重' })
   assert.equal(a1.code, 'A1')
 
-  assert.deepEqual(service.notesKeywords().keywords, [{ tag: '猫粮', s: 1, a: 1, b: 0 }])
+  assert.deepEqual(service.notesKeywords().keywords, [{ tag: '猫粮', s: 1, a: 1, b: 0, codes: ['S1', 'A1'] }])
+  assert.deepEqual(service.notesKeywords().entries.map((entry) => entry.code), ['S1', 'A1'])
   assert.deepEqual(service.notesEntries('猫粮').entries.map((entry) => entry.code), ['S1', 'A1'])
   assert.equal(service.notesRead('S1').note.text, '先看粉料比例')
   assert.throws(() => service.notesRead('S9'), /没有笔记 S9/)

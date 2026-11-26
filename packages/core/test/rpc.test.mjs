@@ -89,7 +89,8 @@ test('notes RPC：关键词表、条目、按编号增删改与 promote/demote',
 
   const table = await handle('notes', {})
   assert.equal(table.ok, true)
-  assert.deepEqual(table.value.keywords, [{ tag: '猫粮', s: 1, a: 0, b: 0 }])
+  assert.deepEqual(table.value.keywords, [{ tag: '猫粮', s: 1, a: 0, b: 0, codes: ['S1'] }])
+  assert.deepEqual(table.value.entries.map((entry) => entry.code), ['S1'])
   assert.match(table.value.stats.day, /^\d{4}-\d{2}-\d{2}$/)
 
   const entries = await handle('noteEntries', { tag: '猫粮' })

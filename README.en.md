@@ -11,7 +11,7 @@ A runtime for an agent that **lives by its own settings**: its own schedule, mem
 - **Clock** — 10–60 min auto-wake grid, hot/cold time ranges, its own schedule, rest, one night sleep at 03:30 by default (configurable).
 - **Memory** — layered and shown in three ways (hot injection / warm retrieval / cold clues only); forgetting is **dimension reduction**, not deletion.
 - **Persona** — `charter` (read-only) + `self` (rewritten during the pre-sleep free phase, versioned in `life.db`) + `journal`.
-- **Notes** — self-written prompts/rules plus hot-memory notes, covering what automatic memory misses or surfaces too late; 50 persistent S notes (core full text + keyword index) and 10 A-today / 10 B-yesterday temp notes (full text, B read-only), 40 chars each, addressed by view-scoped S/A/B slot codes; injected at the start of every new session; manage them in Living → Notes (keyword-first).
+- **Notes** — self-written prompts/rules plus hot-memory notes, covering what automatic memory misses or surfaces too late; 50 persistent S notes (core full text + keyword index) and 10 A-today / 10 B-yesterday temp notes (full text, B read-only), 40 chars each, addressed by view-scoped S/A/B slot codes; injected at the start of every new session; manage them in Living → Notes (keyword rows list slot codes; switch between keywords and all notes).
 - **Continuity** — non-sleep rotation/restart gets a compressed handoff (with a deterministic tail fallback); sleep is a boundary and does not continue the conversation.
 - **World** — WorldGem: a gem provides **capabilities** (MCP), **events** (ingest / outbox) and a **skill** that teaches the model how to use it.
 

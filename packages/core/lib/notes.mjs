@@ -66,18 +66,20 @@ export function formatNoteCorpus(notes = [], { today, yesterday } = {}) {
     .join('\n')
 }
 
-/** Every tag once, with per-tier counts; tags never disappear from the index while any tier holds them. */
+/** Every tag once, with per-tier counts and view-ordered slot codes; tags never disappear while any tier holds them. */
 export function listNoteKeywords({ persistent = [], today = [], yesterday = [] } = {}) {
   const map = new Map()
-  const add = (notes, key) => {
+  const add = (notes, key, prefix) => {
     for (const note of notes) {
-      if (!map.has(note.tag)) map.set(note.tag, { tag: note.tag, s: 0, a: 0, b: 0 })
-      map.get(note.tag)[key] += 1
+      if (!map.has(note.tag)) map.set(note.tag, { tag: note.tag, s: 0, a: 0, b: 0, codes: [] })
+      const keyword = map.get(note.tag)
+      keyword[key] += 1
+      keyword.codes.push(`${prefix}${note.seq}`)
     }
   }
-  add(persistent, 's')
-  add(today, 'a')
-  add(yesterday, 'b')
+  add(persistent, 's', 'S')
+  add(today, 'a', 'A')
+  add(yesterday, 'b', 'B')
   return [...map.values()].sort(
     (left, right) => right.s + right.a + right.b - (left.s + left.a + left.b) || left.tag.localeCompare(right.tag, 'zh'),
   )
