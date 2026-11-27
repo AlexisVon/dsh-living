@@ -1329,6 +1329,60 @@ test('夜睡：模型整理失败先保留 pending，第三次 fallback', async 
   assert.equal(store.listEvents({ kind: 'memory_extract_failed', limit: 10 }).length, 2)
 })
 
+test('夜睡：整理输出解析失败同轮重试一次，成功则不失眠', async (t) => {
+  let calls = 0
+  const extractMemory = async ({ segments }) => {
+    calls += 1
+    if (calls === 1) return { ok: false, tokens: 7, invalidOutput: true, error: 'Expected \',\' delimiter' }
+    return {
+      ok: true,
+      tokens: 11,
+      items: [{
+        kind: 'episode',
+        title: 't',
+        description: 'd',
+        importance: 0.5,
+        confidence: 0.8,
+        tsStart: segments[0].tsStart,
+        tsEnd: segments[0].tsStart,
+        raw: segments[0].id,
+        facets: {},
+      }],
+      edges: [],
+    }
+  }
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory })
+  await store.appendEvent({ id: 'e-retry-ok', ts: NOW - 1000, kind: 'message', payload: { text: '写成全角逗号的 JSON' } })
+  const result = await rt.consolidate('night')
+  assert.equal(calls, 2)
+  assert.equal(result.rawPending, 0)
+  assert.equal(result.memoryItems, 1)
+  assert.equal(result.extractTokens, 18, '两次尝试的 token 都要计入')
+  assert.equal(store.listEvents({ kind: 'memory_extract_failed', limit: 5 }).length, 0)
+  const [retried] = store.listEvents({ kind: 'memory_extract_retried', limit: 5 })
+  assert.match(retried.payload.error, /Expected/)
+  assert.equal(retried.payload.tokens, 7)
+})
+
+test('夜睡：解析失败同轮只重试一次，仍失败才留 pending', async (t) => {
+  let calls = 0
+  const extractMemory = async () => {
+    calls += 1
+    return { ok: false, tokens: 3, invalidOutput: true, error: 'bad json' }
+  }
+  const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }), extractMemory })
+  await store.appendEvent({ id: 'e-retry-both', ts: NOW - 1000, kind: 'message', payload: { text: '总是坏 JSON' } })
+  const result = await rt.consolidate('night')
+  assert.equal(calls, 2)
+  assert.equal(result.rawPending, 1)
+  assert.equal(result.extractTokens, 6)
+  assert.equal(store.listRawSegments({ status: 'pending' })[0].attempts, 1)
+  assert.equal(store.listEvents({ kind: 'memory_extract_retried', limit: 5 }).length, 1)
+  const [failed] = store.listEvents({ kind: 'memory_extract_failed', limit: 5 })
+  assert.equal(failed.payload.attempts, 1)
+  assert.match(failed.payload.error, /bad json/)
+})
+
 test('rest：只采集 raw，不做整理', async (t) => {
   const { rt, store } = await setup(t, { runner: async () => ({ tokens: 0 }) })
   await store.appendEvent({ id: 'e-rest', ts: NOW - 1000, kind: 'message', payload: { text: '白天的事' } })

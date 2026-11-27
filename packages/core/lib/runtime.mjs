@@ -800,19 +800,34 @@ export function createRuntime({
           break
         }
       }
-      let result = null
-      if (typeof extractMemory === 'function') {
-        try {
-          result = await extractMemory({ segments: batch })
-        } catch (error) {
-          result = { ok: false, tokens: 0, error: error.message }
+      const runExtract = async () => {
+        let outcome = null
+        if (typeof extractMemory === 'function') {
+          try {
+            outcome = await extractMemory({ segments: batch })
+          } catch (error) {
+            outcome = { ok: false, tokens: 0, error: error.message }
+          }
+        } else {
+          outcome = { ok: false, tokens: 0, error: 'no_extractor' }
         }
-      } else {
-        result = { ok: false, tokens: 0, error: 'no_extractor' }
+        const tokens = Number(outcome?.tokens) || 0
+        extractTokens += tokens
+        budgetState = budget.consume(budgetState, now(), tokens, budgetCfg)
+        return outcome
+      }
+      let result = await runExtract()
+      // Output parse failures are retried once in-run; call/timeout failures keep the across-night attempts retry.
+      if (result?.ok === false && result.invalidOutput === true) {
+        await store.appendEvent({
+          kind: 'memory_extract_retried',
+          ts: nowMs,
+          source: 'living',
+          payload: { raw: batch.map((segment) => segment.id), error: result.error ?? 'invalid output', tokens: Number(result.tokens) || 0, remaining },
+        })
+        result = await runExtract()
       }
       const batchTokens = Number(result?.tokens) || 0
-      extractTokens += batchTokens
-      budgetState = budget.consume(budgetState, now(), batchTokens, budgetCfg)
       if (!result?.ok) {
         const attempts = Math.max(...batch.map((segment) => Number(segment.attempts) || 0))
         const unavailable = typeof extractMemory !== 'function' || result?.error === '记忆整理 preset 未就绪'

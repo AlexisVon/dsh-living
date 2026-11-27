@@ -234,8 +234,14 @@ export function createMemoryExtractor(ctx, { home, workspace = home, presetId, l
         logger.warn?.(`living: 记忆整理结果 ${result.outcome}（${result.errorCode ?? 'unknown'}），保留 pending`)
         return { ok: false, tokens: result.tokens ?? 0, error: result.errorCode ?? result.outcome }
       }
-      const parsed = parseMemoryExtraction(result.text, { segments, maxItems: memoryParams.maxItems, maxEdges: memoryParams.maxEdges })
-      return { ok: true, ...parsed, tokens: result.tokens ?? 0 }
+      const tokens = result.tokens ?? 0
+      try {
+        const parsed = parseMemoryExtraction(result.text, { segments, maxItems: memoryParams.maxItems, maxEdges: memoryParams.maxEdges })
+        return { ok: true, ...parsed, tokens }
+      } catch (error) {
+        logger.warn?.(`living: 记忆整理输出无效: ${error.message}`)
+        return { ok: false, tokens, invalidOutput: true, error: error.message }
+      }
     } catch (error) {
       logger.warn?.(`living: 记忆整理调用失败: ${error.message}`)
       return { ok: false, tokens: 0, error: error.message }

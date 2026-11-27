@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Pack (and optionally publish) dsh-living 0.3.16.
+  Pack (and optionally publish) dsh-living 0.3.17.
 
 .DESCRIPTION
   Run this on the machine where npm 2FA is available.
@@ -62,7 +62,7 @@ try {
   Pop-Location
 }
 
-$core = Join-Path $out 'dsh-living-0.3.16.tgz'
+$core = Join-Path $out 'dsh-living-0.3.17.tgz'
 if (-not (Test-Path $core)) {
   throw "Expected tarball not found: $core"
 }
@@ -87,7 +87,7 @@ $publishArgs = @('publish', '--access', 'public')
 if ($Staged) { $publishArgs += '--staged' }
 
 Write-Host ''
-Write-Host 'Publishing dsh-living 0.3.16...'
+Write-Host 'Publishing dsh-living 0.3.17...'
 & npm @publishArgs $core
 if ($LASTEXITCODE -ne 0) { throw 'dsh-living publish failed' }
 

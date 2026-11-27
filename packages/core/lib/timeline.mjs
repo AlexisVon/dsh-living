@@ -16,6 +16,7 @@ const EVENT_CATEGORIES = {
   memory_extracted: 'memory',
   memory_extract_failed: 'memory',
   memory_extract_skipped: 'memory',
+  memory_extract_retried: 'memory',
   session_handoff: 'memory',
   session_handoff_failed: 'memory',
   persona_evolved: 'persona',
@@ -56,6 +57,7 @@ function eventTitle(event) {
     return `睡眠 · ${payload.trigger === 'manual' ? '手动' : '夜睡'} · ${minutes} 分钟${payload.ok === false ? ' · 失败' : ''}`
   }
   if (event.kind === 'memory_extracted') return `记忆整理 · ${payload.items ?? 0} 条 / ${payload.edges ?? 0} 边${payload.fallback ? ' · fallback' : ''}`
+  if (event.kind === 'memory_extract_retried') return '记忆整理 · 输出解析失败，同轮重试'
   if (event.kind === 'session_handoff') return '会话交接'
   if (event.kind === 'context_guard') return '上下文保险'
   if (event.kind === 'sleep_freetime') {
